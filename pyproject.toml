@@ -1,0 +1,51 @@
+[project]
+name = "distilled-cola"
+version = "0.1.0"
+description = "上海房产分析专家 — 将房产博主的专业知识蒸馏为可交互的 AI 分析系统"
+requires-python = ">=3.9"
+dependencies = [
+    "openai>=1.0.0",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=2.2.0",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",
+    "typer>=0.9.0",
+    "tiktoken>=0.6.0",
+    "langchain>=0.1.0",
+    "langchain-community>=0.1.0",
+    "yt-dlp>=2024.0.0",
+    "jieba>=0.42.0",
+    "numpy>=1.24.0",
+    "rank-bm25>=0.2.0",
+    "streamlit>=1.28.0",
+    "opencv-python-headless>=4.8.0",
+    "static-ffmpeg>=3.0",
+]
+
+[project.optional-dependencies]
+transcribe = [
+    "openai-whisper>=20231117",
+    "pyannote-audio>=3.0.0",
+]
+ocr = [
+    "paddleocr>=2.7.0",
+    "paddlepaddle>=2.5.0",
+]
+
+[project.scripts]
+cola = "src.app.cli:app"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --no-header"

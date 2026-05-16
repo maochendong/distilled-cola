@@ -224,72 +224,15 @@ EMBEDDING_MODEL=text-embedding-3-small
 
 ### 微信视频号
 
-**工具**: [wx_channels_download](https://github.com/ltaoo/wx_channels_download) (Go 语言，开源)
+**工具**: [wx_channels_download](https://github.com/ltaoo/wx_channels_download)
 
-通过本地 HTTPS 代理拦截微信 PC 客户端请求，在博主主页注入「批量下载」按钮。
-
-```bash
-# 1. 下载 macOS ARM64 版本
-curl -sL "https://github.com/ltaoo/wx_channels_download/releases/download/v260507/wx_video_download_v260507_darwin_arm64.zip" -o wx_channels_download.zip
-unzip wx_channels_download.zip -d wx_channels_download
-
-# 2. 运行（首次需 sudo 安装根证书）
-sudo ./wx_channels_download/wx_video_download
-```
-
-**配置**：编辑同目录下的 `config.yaml`，设 `download.dir` 为下载路径。
-
-**使用流程**：
-1. 运行工具后，自动配置系统代理为 `127.0.0.1:2023`
-2. 打开微信 PC 客户端，进入目标博主的视频号主页
-3. 页面自动出现「批量下载」按钮，点击即可下载该账号全部视频
-4. 视频下载到配置的目录（本项目中为 `Video/`）
-
-| 优点 | 缺点 |
-|------|------|
-| 无水印原画质 | 需微信 PC 客户端运行 |
-| 一键批量下载 | 首次需信任自签证书 |
-| 跨平台 (Win/Mac/Linux) | 依赖系统代理，可能影响其他网络请求 |
+通过本地 HTTPS 代理拦截微信 PC 客户端请求，在博主主页注入「批量下载」按钮，支持一键下载全部视频。
 
 ### 小红书
 
-**工具**: [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader) (Python，开源)
+**工具**: [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader)
 
-一键输入博主主页链接，自动提取并下载所有图文和视频。
-
-```bash
-# Docker 一键部署（推荐）
-docker pull joeanamier/xhs-downloader
-docker run -p 5556:5556 -v xhs_data:/app/Volume -it joeanamier/xhs-downloader
-```
-
-**使用流程**：
-1. 浏览器访问 `http://localhost:5556`
-2. 粘贴博主主页链接 → 自动爬取全部发布内容
-3. 勾选需要下载的视频/图文 → 批量下载（无水印）
-
-| 优点 | 缺点 |
-|------|------|
-| 支持无水印下载 | macOS 首次配置 Cookie 稍繁琐 |
-| Docker 一键部署 | 依赖 Docker |
-| TUI/CLI/API 三种模式 | — |
-
-### 下载目录
-
-下载的视频统一放入 `Video/` 目录（已加入 `.gitignore`，不会被 git 跟踪）：
-
-```
-蒸馏小可乐/
-├── Video/              # ← 下载的视频放这里
-│   ├── 博主A_视频1.mp4
-│   ├── 博主A_视频2.mp4
-│   └── ...
-├── src/
-├── data/
-└── ...
-```
-
-之后通过 `cola import-video` 导入这些视频到知识库。
+Docker 一键部署，输入博主主页链接即可自动提取并下载所有图文和视频（支持无水印）。
 
 ---
 

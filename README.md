@@ -13,6 +13,7 @@
 - [数据流](#数据流)
 - [快速开始](#快速开始)
 - [视频下载](#视频下载)
+- [画面文字提取 (OCR)](#画面文字提取-ocr)
 - [可用命令](#可用命令)
 - [项目结构](#项目结构)
 - [技术栈](#技术栈)
@@ -233,6 +234,41 @@ EMBEDDING_MODEL=text-embedding-3-small
 **工具**: [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader)
 
 Docker 一键部署，输入博主主页链接即可自动提取并下载所有图文和视频（支持无水印）。
+
+---
+
+## 画面文字提取 (OCR)
+
+对于纯音乐+文字类的视频，使用 OCR 从视频帧中提取画面文字。
+
+### 方案
+
+| 方案 | 引擎 | 适用场景 |
+|------|------|----------|
+| **macOS Vision 框架** | 系统原生 | 批量处理图片帧，中文识别优秀，零依赖无需下载模型 |
+| **PaddleOCR** | 离线 | 高精度中文识别（需安装 `pip install -e ".[ocr]"`） |
+| **GPT-4o Vision** | API | 复杂图表/结构化提取，PaddleOCR 失败时回退 |
+
+### 批量处理图片帧
+
+下载的视频解帧后，每个子文件夹对应一个独立问答主题，图片按数字顺序排列叙事。
+
+```bash
+# OCR 全部子文件夹中的图片
+python scripts/batch_ocr_video.py
+
+# 清理水印、话题标签等干扰文字
+python scripts/clean_ocr.py
+```
+
+输出保存在 `data/ocr_results/`：
+
+```
+  _summary.json       # 全部主题汇总（309 个）
+  主题A.txt            # 每个主题的完整文字，按图片顺序拼接
+  主题B.txt
+  ...
+```
 
 ---
 

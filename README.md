@@ -118,16 +118,24 @@
 ```
 视频文件 (mp4)
     │
-    ├──→ Whisper 音频转录 → 带时间戳的字幕文本
-    │
-    ├──→ OpenCV 帧提取（每 8 秒 + 场景变化检测）
-    │       │
-    │       └──→ PaddleOCR 文字识别（数据表格/政策截图/户型图）
-    │               │
-    │               └──→ GPT-4o Vision（复杂图表结构化分析，PaddleOCR 失败时回退）
-    │
-    └──→ 合并文本：口播 + 画面文字 → 完整知识
-            │
+    ├──→ 自动检测视频类型 ──────────────────────────┐
+    │      │                                        │
+    │      ├──→ 有字幕流 → ffmpeg 直接提取字幕       │
+    │      │              (最快，零 GPU，1 秒完成)    │
+    │      │                                        │
+    │      └──→ 无字幕流 → Whisper 音频转录          │
+    │              │                                │
+    │              ├──→ 口播正常 → 保留转录结果       │
+    │              └──→ 纯音乐/无语音 → 丢弃转录      │
+    │                                                │
+    ├──→ OpenCV 帧提取（每 2 秒 + 场景变化检测）      │
+    │       │                                        │
+    │       └──→ PaddleOCR 画面文字识别               │
+    │               │                                │
+    │               └──→ GPT-4o Vision（复杂图表结构化分析）│
+    │                                                │
+    └──→ 合并文本：口播/字幕 + 画面文字 → 完整知识    │
+            │                                        │
             └──→ 逻辑段落切分（检测话题转移信号）
                     │
                     └──→ 房产领域双维度标注（教师模型）
@@ -272,12 +280,12 @@ cola export knowledge_export.json
 蒸馏小可乐/
 ├── src/
 │   ├── collector/                # 数据采集与处理
-│   │   ├── transcriber.py        # Whisper 音频转录 + 说话人分离
-│   │   ├── frame_extractor.py    # OpenCV 视频帧提取
+│   │   ├── transcriber.py        # Whisper 音频转录 + 字幕流提取 + 说话人分离
+│   │   ├── frame_extractor.py    # OpenCV 视频帧提取（智能采样）
 │   │   ├── ocr.py                # 双引擎 OCR（PaddleOCR + Vision API）
 │   │   ├── segmenter.py          # 逻辑段落切分（话题转移检测）
 │   │   ├── annotator.py          # 房产领域双维度标注（实体/逻辑/建议）
-│   │   └── pipeline.py           # 端到端采集管道
+│   │   └── pipeline.py           # 端到端采集管道（自动检测视频类型）
 │   ├── knowledge_base/           # 知识库
 │   │   ├── embedder.py           # 向量嵌入（OpenAI / 本地模型）
 │   │   ├── vector_store.py       # 知识索引（ChromaDB，支持标签过滤）
@@ -315,9 +323,11 @@ cola export knowledge_export.json
 
 | 组件 | 方案 | 说明 |
 |------|------|------|
-| 音频转录 | **Whisper** | 本地运行，medium 模型，高精度中文识别 |
+| 视频类型检测 | **自动分流** | 字幕流 / 口播 / 纯音乐，自动选择最优路径 |
+| 字幕流提取 | **ffmpeg** | 内嵌 SRT/ASS 字幕直接提取，零 GPU 消耗 |
+| 音频转录 | **Whisper** | 本地运行，自动丢弃纯音乐视频的无效转录 |
 | 说话人分离 | **PyAnnote** (可选) | 区分博主独白 vs 采访对话 |
-| 帧提取 | **OpenCV** | 定时采样 + 场景变化检测 |
+| 帧提取 | **OpenCV** | 每 2 秒采样 + 场景变化检测 |
 | 文字识别 | **PaddleOCR** → **GPT-4o Vision** | 双引擎，自动回退 |
 | 文本嵌入 | **BGE-small-zh** (本地) / **OpenAI** | 本地默认，OpenAI key 备选 |
 | 向量数据库 | **ChromaDB** | 本地持久化，支持元数据过滤 |

@@ -30,22 +30,41 @@ def process_local_video(
 ) -> list[dict]:
     """处理本地视频文件：转录 + 帧OCR + 切分 + 标注。
 
+    自动检测视频类型:
+      - 有字幕流 → 直接提取字幕（最快）
+      - 有语音口播 → Whisper 转录
+      - 纯音乐+画面文字 → 跳过音频，仅 OCR
+
     适用于微信视频号/小红书等下载的视频。
     """
     print(f"🎬 处理本地视频: {Path(video_path).name}")
     if title:
         print(f"   📺 {title}")
 
-    # Step 1: 音频转录
     t = Transcriber()
-    segments, source_id = t.from_video_file(video_path, title=title)
-    transcript_text = " ".join(s.text for s in segments)
-    print(f"   🎤 音频转录: {len(transcript_text)} 字")
+    transcript_text = ""
 
-    # Step 2: 帧提取 + OCR
+    # Step 1: 检测字幕流 → 优先提取
+    segments, source_id = t.from_subtitle_stream(video_path, title=title)
+    if segments:
+        transcript_text = " ".join(s.text for s in segments)
+        print(f"   📑 字幕提取: {len(transcript_text)} 字")
+
+    # Step 2: 无字幕 → 尝试 Whisper 转录，结果为空/无意义时丢弃
+    if not transcript_text:
+        segments, source_id = t.from_video_file(video_path, title=title)
+        candidate = " ".join(s.text for s in segments)
+        if candidate.strip() and len(candidate) >= 5:
+            transcript_text = candidate
+            print(f"   🎤 音频转录: {len(transcript_text)} 字")
+        else:
+            source_id = title or Path(video_path).stem
+            print(f"   🎵 纯音乐/无语音视频, 跳过音频转录, 仅使用画面文字")
+
+    # Step 3: 帧提取 + OCR
     ocr_text = ""
     if enable_ocr:
-        extractor = FrameExtractor(interval_sec=8.0)
+        extractor = FrameExtractor(interval_sec=2.0, max_frames=300)
         frames = extractor.extract(video_path)
 
         if frames:
@@ -65,17 +84,26 @@ def process_local_video(
                 ocr_text = "\n\n--- [画面文字] ---\n\n".join(ocr_parts)
                 print(f"   👁️ OCR 提取: {len(ocr_text)} 字")
 
-    # Step 3: 合并转录 + OCR
-    if ocr_text:
+    # Step 4: 合并转录 + OCR
+    if not transcript_text and not ocr_text:
+        print("   ⚠️ 未提取到任何文字内容")
+        combined_text = ""
+    elif ocr_text and transcript_text:
         combined_text = (
             f"{transcript_text}\n\n"
             f"【以下为视频画面中提取的文字内容，补充了口播中可能未覆盖的信息】\n"
             f"{ocr_text}"
         )
+    elif ocr_text:
+        combined_text = ocr_text
     else:
         combined_text = transcript_text
 
     vid = video_id or source_id
+    if not combined_text.strip():
+        print("   ⚠️ 视频无有效文字内容，跳过入库")
+        return []
+
     return _process_and_annotate(vid, combined_text, title=title or vid)
 
 

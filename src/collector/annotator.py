@@ -90,25 +90,61 @@ def annotate_batch(
     """
     model = model or config.teacher_model
     annotated = []
+    import time, json as _json
+    from pathlib import Path as _Path
+
+    # 恢复检查点
+    checkpoint_path = _Path("data/processed/annotate_checkpoint.json")
+    completed_ids = set()
+    if checkpoint_path.exists():
+        checkpoint = _json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        annotated = checkpoint["done"]
+        completed_ids = set(checkpoint["done_ids"])
+        print(f"  📦 恢复检查点: {len(completed_ids)} 块已标注")
 
     for i, block in enumerate(blocks):
+        block_id = block.get("id", str(i))
+        if block_id in completed_ids:
+            continue
+
         text = block.get("text", "")
         if not text.strip():
             block["annotation"] = {}
             annotated.append(block)
             continue
 
-        try:
-            annotation = annotate_block(text, model=model)
-        except Exception as e:
-            print(f"  ⚠️ 标注 block {i} 失败: {e}")
-            annotation = {}
+        # 重试逻辑
+        for attempt in range(3):
+            try:
+                annotation = annotate_block(text, model=model)
+                break
+            except Exception as e:
+                print(f"  ⚠️ 标注 block {i} 失败 (尝试 {attempt+1}/3): {e}")
+                annotation = {}
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 指数退避
 
         block["annotation"] = annotation
         annotated.append(block)
 
-        if (i + 1) % batch_size == 0:
-            print(f"    标注进度: {i+1}/{len(blocks)}")
+        # 每 20 块保存检查点
+        if (i + 1) % 20 == 0:
+            checkpoint_path.write_text(
+                _json.dumps({
+                    "done": annotated,
+                    "done_ids": [b.get("id", str(j)) for j, b in enumerate(annotated)],
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(f"    标注进度: {i+1}/{len(blocks)}  💾 检查点已保存")
+
+        # API 限流
+        if (i + 1) % 5 == 0:
+            time.sleep(0.5)
+
+    # 清理检查点
+    if checkpoint_path.exists():
+        checkpoint_path.unlink()
 
     return annotated
 

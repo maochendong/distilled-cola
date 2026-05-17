@@ -40,8 +40,8 @@ class Embedder:
         resp = self._openai_client.embeddings.create(input=texts, model=model)
         return [d.embedding for d in resp.data]
 
-    def _embed_local(self, texts: list[str]) -> list[list[float]]:
-        """使用本地 sentence-transformers 模型。"""
+    def _embed_local(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
+        """使用本地 sentence-transformers 模型，分 batch 避免 OOM。"""
         import os
         if "HF_ENDPOINT" not in os.environ:
             os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
@@ -49,7 +49,14 @@ class Embedder:
             from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
             if not self._local_model:
                 self._local_model = SentenceTransformer("BAAI/bge-m3")
-            return self._local_model.encode(texts, normalize_embeddings=True).tolist()  # type: ignore[no-any-return]
+            all_embeddings = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                batch_emb = self._local_model.encode(batch, normalize_embeddings=True).tolist()
+                all_embeddings.extend(batch_emb)
+                if len(texts) > batch_size:
+                    print(f"    嵌入进度: {min(i+batch_size, len(texts))}/{len(texts)}")
+            return all_embeddings  # type: ignore[no-any-return]
         except ImportError:
             msg = (
                 "没有可用的嵌入模型。请设置 OPENAI_API_KEY 或安装 sentence-transformers:\n"

@@ -1,6 +1,6 @@
 """文本嵌入模块 — 将文本转为向量表示。
 
-默认使用本地 sentence-transformers 模型（BGE 中文）。
+默认使用本地 sentence-transformers 模型（BGE-M3 多语言）。
 若设置了 OPENAI_API_KEY，也可用 OpenAI Embedding API。
 注意：DeepSeek 不提供 Embedding API。
 """
@@ -8,6 +8,9 @@
 from __future__ import annotations
 
 from src.config import config
+
+
+EMBED_DIM = 1024  # bge-m3 输出维度
 
 
 class Embedder:
@@ -39,10 +42,13 @@ class Embedder:
 
     def _embed_local(self, texts: list[str]) -> list[list[float]]:
         """使用本地 sentence-transformers 模型。"""
+        import os
+        if "HF_ENDPOINT" not in os.environ:
+            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
             if not self._local_model:
-                self._local_model = SentenceTransformer("BAAI/bge-small-zh-v1.5")
+                self._local_model = SentenceTransformer("BAAI/bge-m3")
             return self._local_model.encode(texts, normalize_embeddings=True).tolist()  # type: ignore[no-any-return]
         except ImportError:
             msg = (

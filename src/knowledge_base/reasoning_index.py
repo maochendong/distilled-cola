@@ -60,7 +60,7 @@ class ReasoningChain:
 class ReasoningIndex:
     """基于 ChromaDB 的推理链索引。"""
 
-    def __init__(self) -> None:
+    def __init__(self, embed_dim: int = 1024) -> None:
         self.client = chromadb.PersistentClient(
             path=str(config.chroma_db_path),
             settings=Settings(anonymized_telemetry=False),
@@ -68,7 +68,7 @@ class ReasoningIndex:
         self.collection_name = config.reasoning_collection
         self._collection = self.client.get_or_create_collection(
             name=self.collection_name,
-            metadata={"hnsw:space": "cosine"},
+            metadata={"hnsw:space": "cosine", "dim": embed_dim},
         )
 
     @property

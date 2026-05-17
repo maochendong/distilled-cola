@@ -1,12 +1,11 @@
 """房产领域标注模块 — 对分析段落进行结构化的实体、逻辑、建议标注。
 
-使用教师模型（Claude/OpenAI）对段落进行批次标注。
+使用教师模型（DeepSeek Pro）对段落进行逐段标注。
 """
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from src.config import config
@@ -61,10 +60,7 @@ Choose from:
 """
 
 
-def annotate_block(
-    text: str,
-    model: str | None = None,
-) -> dict:
+def annotate_block(text: str, model: str | None = None) -> dict:
     """对单个分析段落进行标注。
 
     Args:
@@ -74,7 +70,7 @@ def annotate_block(
     Returns:
         标注结果字典
     """
-    return _annotate_with_openai(text, model or config.teacher_model)
+    return _annotate_with_api(text, model or config.teacher_model)
 
 
 def annotate_batch(
@@ -82,11 +78,11 @@ def annotate_batch(
     batch_size: int = 5,
     model: str | None = None,
 ) -> list[dict]:
-    """批量标注多个段落，使用教师模型。
+    """批量标注多个段落，使用教师模型 — 逐段标注。
 
     Args:
         blocks: 知识块列表（每块含 text 字段）
-        batch_size: 每批处理数量
+        batch_size: 每批处理数量，仅用于打印进度
         model: 教师模型名称
 
     Returns:
@@ -95,30 +91,67 @@ def annotate_batch(
     model = model or config.teacher_model
     annotated = []
 
-    for i in range(0, len(blocks), batch_size):
-        batch = blocks[i : i + batch_size]
-        batch_texts = "\n\n---\n\n".join(
-            f"[段落 {idx}] {b['text']}" for idx, b in enumerate(batch, i)
-        )
-
-        prompt = f"请标注以下 {len(batch)} 个分析段落：\n\n{batch_texts}"
+    for i, block in enumerate(blocks):
+        text = block.get("text", "")
+        if not text.strip():
+            block["annotation"] = {}
+            annotated.append(block)
+            continue
 
         try:
-            annotation = _annotate_with_openai(prompt, model)
+            annotation = annotate_block(text, model=model)
         except Exception as e:
-            print(f"  标注批次 {i//batch_size} 失败: {e}")
+            print(f"  ⚠️ 标注 block {i} 失败: {e}")
             annotation = {}
 
-        # 将标注结果贴回对应的 block
-        for j, block in enumerate(batch):
-            block["annotation"] = annotation  # 理想情况是逐段匹配，简化处理
-            annotated.append(block)
+        block["annotation"] = annotation
+        annotated.append(block)
+
+        if (i + 1) % batch_size == 0:
+            print(f"    标注进度: {i+1}/{len(blocks)}")
 
     return annotated
 
 
-def _annotate_with_openai(text: str, model: str) -> dict:
-    """使用 API（DeepSeek/OpenAI）标注。"""
+def extract_reasoning_chains(blocks: list[dict]) -> list:
+    """从标注后的知识块中提取推理链，用于写入 ReasoningIndex。
+
+    Args:
+        blocks: 已标注的知识块列表
+
+    Returns:
+        ReasoningChain 列表（去重）
+    """
+    from src.knowledge_base.reasoning_index import ReasoningChain
+
+    chains: list[ReasoningChain] = []
+    seen_triggers: set[str] = set()
+
+    for block in blocks:
+        ann = block.get("annotation", {})
+        if not ann:
+            continue
+
+        chain_info = ann.get("推理链", {})
+        if isinstance(chain_info, dict):
+            trigger = chain_info.get("trigger", "").strip()
+            conclusion = chain_info.get("conclusion", "").strip()
+            key_logic = chain_info.get("key_logic", "").strip()
+
+            if trigger and conclusion:
+                dedup_key = trigger[:50]
+                if dedup_key not in seen_triggers:
+                    seen_triggers.add(dedup_key)
+                    rc = ReasoningChain(trigger=trigger, conclusion=conclusion)
+                    if key_logic:
+                        rc.add_step(key_logic, logic_type="核心推演")
+                    chains.append(rc)
+
+    return chains
+
+
+def _annotate_with_api(text: str, model: str) -> dict:
+    """使用 API（DeepSeek）标注单段文本。"""
     from src.llm import chat_client
 
     client = chat_client()

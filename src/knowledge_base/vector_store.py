@@ -14,7 +14,7 @@ from src.config import config
 class KnowledgeIndex:
     """存储带房产领域标注的知识片段。"""
 
-    def __init__(self) -> None:
+    def __init__(self, embed_dim: int = 1024) -> None:
         self.client = chromadb.PersistentClient(
             path=str(config.chroma_db_path),
             settings=Settings(anonymized_telemetry=False),
@@ -22,7 +22,7 @@ class KnowledgeIndex:
         self.collection_name = config.knowledge_collection
         self._collection = self.client.get_or_create_collection(
             name=self.collection_name,
-            metadata={"hnsw:space": "cosine"},
+            metadata={"hnsw:space": "cosine", "dim": embed_dim},
         )
 
     @property

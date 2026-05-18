@@ -50,11 +50,16 @@ class HybridRetriever:
         self.reranker = Reranker()
         self._bm25: BM25Okapi | None = None
         self._bm25_corpus: list[dict] | None = None
+        self._known_areas: list[str] | None = None
+        self._embed_cache: dict[str, list[float]] = {}
+        self._embed_available: bool | None = None  # checked lazily
 
     def build_bm25_index(self) -> None:
         """从知识索引构建 BM25 倒排索引。"""
         from rank_bm25 import BM25Okapi
 
+        if self._bm25 is not None:
+            return  # already built
         all_data = self.knowledge_index.collection.get(include=["documents", "metadatas"])
         corpus_texts = []
         self._bm25_corpus = []
@@ -69,9 +74,23 @@ class HybridRetriever:
             self._bm25 = BM25Okapi(corpus_texts)
             print(f"  🔍 BM25 索引构建完成: {len(corpus_texts)} 篇文档")
 
+    def _get_embedding(self, query: str) -> list[float] | None:
+        """获取查询向量，带缓存。嵌入不可用时返回 None。"""
+        if query in self._embed_cache:
+            return self._embed_cache[query]
+        if self._embed_available is None:
+            self._embed_available = self.embedder.is_available()
+        if not self._embed_available:
+            return None
+        emb = self.embedder.embed_single(query)
+        self._embed_cache[query] = emb
+        return emb
+
     def _semantic_search(self, query: str, top_k: int) -> list[dict]:
         """语义向量检索。"""
-        query_emb = self.embedder.embed_single(query)
+        query_emb = self._get_embedding(query)
+        if query_emb is None:
+            return []
         return self.knowledge_index.search(query_emb, top_k=top_k)
 
     def _keyword_search(self, query: str, top_k: int) -> list[dict]:
@@ -89,10 +108,106 @@ class HybridRetriever:
         scored.sort(key=lambda x: x["bm25_score"], reverse=True)
         return [s for s in scored if s["bm25_score"] > 0][:top_k]
 
+    def _extract_query_entities(self, query: str) -> dict:
+        """从查询中提取板块和逻辑标签，用于推理链排序加分。
+
+        策略：
+        1. 完整子串匹配已知板块名（最长优先，避免短名误匹配长名）
+        2. 同板块扩展：如果匹配板块是另一已知板块的子串，自动扩展
+           （"前滩"→"前滩南""前滩九宫格"等）
+        3. 逻辑标签用关键词规则映射（"vs""对比"→"板块对比"）
+        """
+        # 惰性加载已知板块列表
+        if self._known_areas is None:
+            all_data = self.knowledge_index.collection.get(include=["metadatas"])
+            areas = set()
+            for m in all_data["metadatas"]:
+                if m.get("areas"):
+                    for a in m["areas"].split(","):
+                        a = a.strip()
+                        if len(a) >= 2:
+                            areas.add(a)
+            self._known_areas = sorted(areas, key=lambda x: (-len(x), x))
+
+        matched_areas = []
+        remaining = query
+
+        # 板块匹配：最长子串优先（精确完整匹配，不用前缀截断）
+        for area in self._known_areas:
+            if area in remaining:
+                matched_areas.append(area)
+                remaining = remaining.replace(area, "", 1)
+
+        # 同板块扩展：如果匹配板块名是另一已知板块的子串，自动包含
+        # 例如 "前滩" → "前滩南"、"前滩九宫格"、"前滩太古里"
+        expanded = set(matched_areas)
+        for base in matched_areas:
+            related = [a for a in self._known_areas
+                       if base in a and a != base]
+            expanded.update(related[:3])
+
+        # 逻辑标签：关键词规则映射（不用子串匹配，用户不会说"板块对比"）
+        logic_rules = [
+            ("板块对比", ["vs", "对比", "怎么选", "还是", "比较"]),
+            ("学区分析", ["学区", "学校", "教育", "上学"]),
+            ("时机判断", ["时机", "时候", "现在", "还能", "抄底", "高位"]),
+            ("政策解读", ["政策", "新规", "调控", "贷款", "利率", "认房不认贷", "限购"]),
+            ("供需分析", ["供应", "供需", "库存", "去化", "挂牌"]),
+            ("倒挂判断", ["倒挂", "划算", "溢价"]),
+            ("风险提示", ["风险", "危险", "谨慎"]),
+            ("流动性评估", ["流动性", "出手", "成交", "流通", "变现"]),
+            ("规划利好", ["规划", "利好", "发展", "潜力"]),
+        ]
+        matched_logic = []
+        for tag, keywords in logic_rules:
+            if any(kw in query for kw in keywords):
+                matched_logic.append(tag)
+
+        return {"areas": list(expanded)[:4], "logic_tags": matched_logic[:2]}
+
     def _reasoning_search(self, query: str, top_k: int) -> list[dict]:
-        """推理链检索。"""
-        query_emb = self.embedder.embed_single(query)
-        return self.reasoning_index.search(query_emb, top_k=top_k)
+        """推理链检索（元数据排序加分）。
+
+        提取查询中的板块/逻辑标签后，对候选链做排序加分而非硬过滤：
+        - 匹配板块的链 score +0.15
+        - 匹配逻辑标签的链 score +0.10
+        - 多项匹配可叠加，上限 +0.30
+        保证不丢任何候选，同时让语义相关 + 标签匹配的链排到前面。
+        """
+        entities = self._extract_query_entities(query)
+        query_emb = self._get_embedding(query)
+        if query_emb is None:
+            return []
+
+        # 拉较大候选集供排序加分
+        candidates = self.reasoning_index.search(query_emb, top_k=50)
+
+        matched_areas = entities.get("areas", [])
+        matched_logic = entities.get("logic_tags", [])
+
+        if not matched_areas and not matched_logic:
+            # 无实体可匹配，直接返回 top-k
+            return candidates[:top_k]
+
+        # 排序加分
+        for c in candidates:
+            boost = 0.0
+            chain_areas = c.get("areas", "") or ""
+            chain_tags = c.get("logic_tags", "") or ""
+
+            # 板块匹配加分
+            if matched_areas and any(a and a in chain_areas for a in matched_areas):
+                boost += 0.15
+
+            # 逻辑标签匹配加分
+            if matched_logic and any(t and t in chain_tags for t in matched_logic):
+                boost += 0.10
+
+            c["score"] = c.get("score", 0.0) + boost
+
+        # 按加分后排序列取 top-k
+        candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+        return candidates[:top_k]
 
     def retrieve(
         self, query: str, top_k: int | None = None,

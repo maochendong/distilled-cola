@@ -23,6 +23,36 @@ class RAGPipeline:
         self.generator = Generator()
         self.validator = ReasoningValidator()
 
+    def _format_context(self, hits: list[dict]) -> str:
+        """从已检索的结果中格式化上下文文本。"""
+        parts = []
+        for i, h in enumerate(hits, 1):
+            # 知识块和推理链有不同的结构
+            if "metadata" in h and h["metadata"]:
+                source = h["metadata"].get("source", h["metadata"].get("title", ""))
+                tags = []
+                if h["metadata"].get("logic_tags"):
+                    tags.append(f"逻辑: {h['metadata']['logic_tags']}")
+                if h["metadata"].get("areas"):
+                    tags.append(f"板块: {h['metadata']['areas']}")
+                tag_info = f"  [{', '.join(tags)}]" if tags else ""
+            elif "trigger" in h:
+                source = f"推理链: {h['trigger'][:60]}"
+                tag_info = ""
+            else:
+                source = ""
+                tag_info = ""
+            parts.append(f"[{i}] (来源: {source}){tag_info}\n{h['text']}")
+        return "\n\n---\n\n".join(parts) if parts else ""
+
+    def _get_reasoning_chains(self, hits: list[dict]) -> str:
+        """从已检索的结果中提取推理链文本。"""
+        chains = [h for h in hits if "trigger" in h]
+        parts = []
+        for i, h in enumerate(chains, 1):
+            parts.append(f"### 推理链 {i}\n{h['text']}")
+        return "\n\n".join(parts) if parts else ""
+
     def ask(self, query: str, top_k: int | None = None) -> dict:
         """完整问答流程：检索 → 生成 → 自检。
 
@@ -41,11 +71,11 @@ class RAGPipeline:
         """
         k = top_k or config.top_k
 
-        # Step 1+2: 混合检索知识 + 推理链
+        # 仅一次检索，结果复用于 context + reasoning chains
         self.retriever.ensure_bm25_index()
         hits = self.retriever.retrieve(query, top_k=k)
-        context = self.retriever.get_context(query, top_k=k)
-        reasoning_chains = self.retriever.get_reasoning_chains(query, top_k=max(1, k // 2))
+        context = self._format_context(hits)
+        reasoning_chains = self._get_reasoning_chains(hits)
 
         # Step 3+4: 生成 + 自检
         answer = self.generator.generate(query, context=context, reasoning_chains=reasoning_chains)

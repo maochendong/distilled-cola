@@ -6,6 +6,11 @@ import streamlit as st
 
 from src.rag.pipeline import RAGPipeline
 
+
+@st.cache_resource
+def get_pipeline() -> RAGPipeline:
+    return RAGPipeline()
+
 st.set_page_config(
     page_title="蒸馏小可乐 — 上海房产分析专家",
     page_icon="🏠",
@@ -39,10 +44,13 @@ for i, q in enumerate(example_questions):
 if "query" in st.session_state:
     query = st.session_state.query
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def ask_question(q: str, k: int) -> dict:
+    return get_pipeline().ask(q.strip(), top_k=k)
+
 if query:
     with st.spinner("🔍 正在检索博主知识库并生成四步分析..."):
-        pipe = RAGPipeline()
-        result = pipe.ask(query.strip(), top_k=top_k)
+        result = ask_question(query.strip(), top_k)
 
     st.markdown("---")
     st.markdown("### 💡 分析")

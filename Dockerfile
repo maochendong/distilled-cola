@@ -6,8 +6,8 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY src/ ./src/
 
-# Install dependencies (use Tsinghua mirror for faster downloads in China)
-RUN pip install --no-cache-dir --default-timeout=300 -i https://pypi.tuna.tsinghua.edu.cn/simple -e .
+# Install serving dependencies only (no sentence-transformers/torch)
+RUN pip install --no-cache-dir --default-timeout=300 -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[serve]"
 
 # Copy ChromaDB knowledge base
 COPY data/ ./data/

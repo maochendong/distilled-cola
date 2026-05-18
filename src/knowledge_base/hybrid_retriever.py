@@ -1,6 +1,7 @@
-"""混合检索器 — BM25 关键词检索 + 语义向量检索，RRF 融合排序。
+"""混合检索器 — BM25 关键词检索 + 语义向量检索，RRF 融合排序 + Cross-encoder 精排。
 
-确保「前滩2024价格走势」「大宁学区房」这类精确查询能同时命中。
+确保「前滩2024价格走势」「大宁学区房」这类精确查询能同时命中，
+且精排后 top-k 的 query-doc 相关度更高，间接提升生成质量与置信度。
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import re
 from src.config import config
 from src.knowledge_base.embedder import Embedder
 from src.knowledge_base.reasoning_index import ReasoningIndex
+from src.knowledge_base.reranker import Reranker
 from src.knowledge_base.vector_store import KnowledgeIndex
 
 
@@ -45,6 +47,7 @@ class HybridRetriever:
         self.embedder = Embedder()
         self.knowledge_index = KnowledgeIndex()
         self.reasoning_index = ReasoningIndex()
+        self.reranker = Reranker()
         self._bm25: BM25Okapi | None = None
         self._bm25_corpus: list[dict] | None = None
 
@@ -121,15 +124,19 @@ class HybridRetriever:
             else:
                 rrf_scores[doc_id] = {**hit, "score": 1.0 / (60 + rank)}
 
-        fused = sorted(rrf_scores.values(), key=lambda x: x["score"], reverse=True)[:k]
+        # RRF 融合后取 top_k * 4 作为精排候选池
+        fused = sorted(rrf_scores.values(), key=lambda x: x["score"], reverse=True)[:k * 4]
+
+        # Cross-encoder 精排: 对候选池 (query, doc) pair 重新打分
+        reranked = self.reranker.rerank(query, fused, top_k=k)
 
         # 追加推理链
         if include_reasoning:
             reasoning_hits = self._reasoning_search(query, max(1, k // 2))
             if reasoning_hits:
-                fused.extend(reasoning_hits)
+                reranked.extend(reasoning_hits)
 
-        return fused
+        return reranked
 
     def retrieve_knowledge_only(self, query: str, top_k: int | None = None) -> list[dict]:
         """仅检索知识（不包含推理链）。"""

@@ -6,8 +6,8 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY src/ ./src/
 
-# Install dependencies (all packages have pre-compiled manylinux wheels)
-RUN pip install --no-cache-dir --default-timeout=120 -e .
+# Install dependencies (use Tsinghua mirror for faster downloads in China)
+RUN pip install --no-cache-dir --default-timeout=300 -i https://pypi.tuna.tsinghua.edu.cn/simple -e .
 
 # Copy ChromaDB knowledge base
 COPY data/ ./data/

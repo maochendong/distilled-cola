@@ -48,7 +48,12 @@ class Embedder:
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
             if not self._local_model:
-                self._local_model = SentenceTransformer("BAAI/bge-m3")
+                # 避免 torch>=2.5 meta tensor 兼容性问题
+                self._local_model = SentenceTransformer(
+                    "BAAI/bge-m3",
+                    device="cpu",
+                    model_kwargs={"low_cpu_mem_usage": False},
+                )
             all_embeddings = []
             for i in range(0, len(texts), batch_size):
                 batch = texts[i : i + batch_size]

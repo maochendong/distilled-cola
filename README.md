@@ -98,8 +98,8 @@
                 └──────────┬──────────┘
                            ▼
                 ┌─────────────────────┐
-                │  混合检索 + 四步分析  │
-                │  BM25 × 语义 × 推理链 │
+                │  混合检索 + Cross-encoder│
+                │  BM25 × 语义 × 推理链 × 精排│
                 └─────────────────────┘
 ```
 
@@ -146,17 +146,21 @@
     │
     ├──→ 混合检索：语义向量检索 × BM25 关键词检索 × 推理链检索
     │       │
-    │       └──→ RRF 融合排序 → Top-K 知识片段 + 推理链
+    │       ├──→ RRF 融合排序 → Top-20 候选池
+    │       └──→ Cross-encoder 精排（BGE Reranker v2）→ Top-5
     │
-    ├──→ 组装提示词：身份层 + 分析流程层 + 约束层
+    ├──→ 组装提示词：身份层 + 分析流程层 + 约束层 + 显式引用标注
     │       │
     │       └──→ 注入 few-shot 推理范例（博主历史分析路径）
     │
-    ├──→ GPT-4o-mini 生成四步结构化回答
+    ├──→ DeepSeek Flash 生成四步结构化回答（含 [1][2] 来源编号）
     │
-    └──→ 自检循环：置信度 < 0.6 则重新生成
-            │
-            └──→ 输出：结构化分析 + 参考来源 + 置信度
+    ├──→ 自检循环：教师模型（DeepSeek Pro）校验置信度 + 溯源真实性
+    │       │
+    │       ├──→ 6 项检查：变量识别/推理链/风险/建议/来源标注/引用真实性
+    │       └──→ 置信度 < 0.6 或 ≥2 项未通过则重生成
+    │
+    └──→ 输出：结构化分析 + 来源编号引用 + 置信度（教师模型评估）
 ```
 
 ---
@@ -363,7 +367,8 @@ cola export knowledge_export.json
 │   │   ├── embedder.py           # 向量嵌入（OpenAI / 本地模型）
 │   │   ├── vector_store.py       # 知识索引（ChromaDB，支持标签过滤）
 │   │   ├── reasoning_index.py    # 推理链索引
-│   │   └── hybrid_retriever.py   # BM25 + 语义混合检索（RRF 融合）
+│   │   ├── reranker.py           # Cross-encoder 精排（BGE Reranker v2）
+│   │   └── hybrid_retriever.py   # BM25 + 语义混合检索（RRF 融合 + 精排）
 │   ├── rag/                      # RAG 管道
 │   │   ├── generator.py          # 三层提示词架构生成器
 │   │   ├── retriever.py          # 混合检索器封装
@@ -417,7 +422,10 @@ cola export knowledge_export.json
 | 文本嵌入 | **BGE-M3** (本地, 1024维) / **OpenAI** | 本地默认，OpenAI 备选 |
 | 向量数据库 | **ChromaDB** | 本地持久化，支持元数据过滤 |
 | 关键词检索 | **BM25 (rank-bm25)** | 确保精确查询命中 |
-| 混合检索 | **RRF 融合** | 语义 × 关键词 × 推理链 |
+| 混合检索 | **RRF 融合 + 精排** | BM25 × 语义向量 × 推理链，Cross-encoder 二次精排 |
+| 精排模型 | **BGE Reranker v2** | (query, doc) pair 重打分，候选池 ×4 扩召回后精排 |
+| 置信度评估 | **教师模型验证** | DeepSeek Pro 做 6 项检查（含引用真实性核查）|
+| 来源引用 | **显式编号标注** | 回答中标注 [1][2] 来源编号，validator 逐条核对真实性 |
 | 推理 API | **DeepSeek v4 Flash** (学生) / **DeepSeek v4 Pro** (教师) | 主引擎，可替换 OpenAI |
 | 交互界面 | **Typer CLI** + **FastAPI** + **Streamlit** | 三种交互方式 |
 

@@ -49,12 +49,6 @@ class RAGPipeline:
 
         # Step 3+4: 生成 + 自检
         answer = self.generator.generate(query, context=context, reasoning_chains=reasoning_chains)
-        validation = self.validator.validate(query, answer)
-
-        # 如果质量不达标且存在推理链，重试一次
-        if self.validator.needs_refinement(validation) and reasoning_chains:
-            answer = self.generator.generate(query, context=context, reasoning_chains=reasoning_chains)
-            validation = self.validator.validate(query, answer)
 
         sources = [
             {
@@ -69,6 +63,13 @@ class RAGPipeline:
             }
             for h in hits
         ]
+
+        validation = self.validator.validate(query, answer, sources=sources)
+
+        # 如果质量不达标且存在推理链，重试一次
+        if self.validator.needs_refinement(validation) and reasoning_chains:
+            answer = self.generator.generate(query, context=context, reasoning_chains=reasoning_chains)
+            validation = self.validator.validate(query, answer, sources=sources)
 
         return {
             "query": query,

@@ -60,6 +60,108 @@ Choose from:
 """
 
 
+def normalize_annotation(ann: dict) -> dict:
+    """将 LLM 输出的各种 key 名统一为标准格式。
+
+    DeepSeek 的输出 key 名不固定，此函数尝试所有变体并合并。
+    返回的 dict 始终包含以下 key（缺失则为空值）：
+      logic_tags, suggestion_tags, areas, districts, projects,
+      ring_road, price_range, policy_terms, reasoning_chain, confidence
+    """
+    if not isinstance(ann, dict):
+        ann = {}
+
+    def _first_list(d: dict, *keys: str) -> list:
+        for k in keys:
+            v = d.get(k)
+            if isinstance(v, list) and v:
+                return v
+            if isinstance(v, str) and v.strip():
+                return [v]
+        return []
+
+    def _get_nested(d: dict, *paths: str | tuple) -> object:
+        """支持嵌套路径如 ('entities', 'areas') 和顶层 key。
+
+        字符串路径直接取值（返回各种类型），
+        元组路径钻入嵌套 dict 返回叶子值。
+        """
+        for path in paths:
+            if isinstance(path, str):
+                v = d.get(path)
+                if v is not None and v != "" and v != []:
+                    return v
+            elif isinstance(path, tuple):
+                v = d
+                for part in path:
+                    if not isinstance(v, dict):
+                        v = None
+                        break
+                    v = v.get(part)
+                if v is not None and v != "" and v != []:
+                    return v
+        return None
+
+    normalized: dict = {
+        "logic_tags": [],
+        "suggestion_tags": [],
+        "areas": [],
+        "districts": [],
+        "projects": [],
+        "ring_road": "",
+        "price_range": [],
+        "policy_terms": [],
+        "reasoning_chain": {},
+        "confidence": 0.0,
+    }
+
+    raw_logic = _first_list(
+        ann, "logic_tags", "logic_label", "logic_tag",
+        "logical_tags", "logical_label", "logical_tag",
+        "logical_labels", "logical_type", "logical_framework",
+        "logic_labels", "logic_type", "logic_types",
+        "logic_category", "logics", "logic",
+        "逻辑标签",
+    )
+    normalized["logic_tags"] = raw_logic
+
+    raw_suggest = _first_list(
+        ann, "suggestion_tags", "suggestion_label", "suggestion_tag",
+        "suggestion_labels", "suggestion_type", "suggestions",
+        "advice_tags", "advice_label", "advice_tag",
+        "advice_labels", "advice_type", "advice_types",
+        "advice_category", "advice", "suggestion",
+        "建议标签",
+    )
+    normalized["suggestion_tags"] = raw_suggest
+
+    for field in ("areas", "districts", "projects", "ring_road", "price_range", "policy_terms"):
+        v = _get_nested(
+            ann,
+            ("entities", field),
+            field,
+            ("entity_tags", field),
+        )
+        if field == "ring_road":
+            normalized[field] = v if isinstance(v, str) else ""
+        else:
+            normalized[field] = v if isinstance(v, list) else ([v] if isinstance(v, str) and v.strip() else [])
+
+    raw_chain = _get_nested(
+        ann,
+        "reasoning_chain", "推理链", "reasoning",
+        "inference_chain", "reasoning_chains", "inference_chains",
+    )
+    if isinstance(raw_chain, dict):
+        normalized["reasoning_chain"] = raw_chain
+
+    raw_conf = _get_nested(ann, "confidence", "置信度")
+    if isinstance(raw_conf, (int, float)):
+        normalized["confidence"] = float(raw_conf)
+
+    return normalized
+
+
 def annotate_block(text: str, model: str | None = None) -> dict:
     """对单个分析段落进行标注。
 
@@ -168,11 +270,11 @@ def extract_reasoning_chains(blocks: list[dict]) -> list:
         if not ann:
             continue
 
-        chain_info = ann.get("推理链", {})
+        chain_info = normalize_annotation(ann).get("reasoning_chain", {})
         if isinstance(chain_info, dict):
-            trigger = chain_info.get("trigger", "").strip()
-            conclusion = chain_info.get("conclusion", "").strip()
-            key_logic = chain_info.get("key_logic", "").strip()
+            trigger = (chain_info.get("trigger") or "").strip()
+            conclusion = (chain_info.get("conclusion") or "").strip()
+            key_logic = (chain_info.get("key_logic") or "").strip()
 
             if trigger and conclusion:
                 dedup_key = trigger[:50]

@@ -8,6 +8,7 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings
 
+from src.collector.annotator import normalize_annotation
 from src.config import config
 
 
@@ -37,7 +38,7 @@ class KnowledgeIndex:
         # 提取标注元数据供过滤查询
         metadatas = []
         for b in blocks:
-            ann = b.get("annotation", {})
+            ann = normalize_annotation(b.get("annotation", {}))
             meta = {
                 "source": b.get("source", ""),
                 "title": b.get("title", "")[:200],
@@ -49,10 +50,10 @@ class KnowledgeIndex:
                 meta["logic_tags"] = ",".join(ann["logic_tags"][:5])
             if ann.get("suggestion_tags"):
                 meta["suggestion_tags"] = ",".join(ann["suggestion_tags"][:3])
-            if ann.get("entity_tags", {}).get("areas"):
-                meta["areas"] = ",".join(ann["entity_tags"]["areas"][:3])
-            if ann.get("entity_tags", {}).get("districts"):
-                meta["districts"] = ",".join(ann["entity_tags"]["districts"][:3])
+            if ann.get("areas"):
+                meta["areas"] = ",".join(ann["areas"][:3])
+            if ann.get("districts"):
+                meta["districts"] = ",".join(ann["districts"][:3])
             metadatas.append(meta)
 
         # 去重

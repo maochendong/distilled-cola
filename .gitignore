@@ -23,6 +23,12 @@ data/embeddings/*
 # Downloaded resources
 /Video/
 
+# Course website (generated)
+/course/
+
+# Build artifacts
+distilled_cola.egg-info/
+
 # IDE
 .idea/
 .vscode/

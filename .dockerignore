@@ -1,0 +1,15 @@
+.venv
+.git
+__pycache__
+*.pyc
+.DS_Store
+.env
+notebooks/
+tests/
+scripts/
+data/raw/
+data/ocr_results/
+data/processed/
+*.mp4
+*.png
+*.jpg

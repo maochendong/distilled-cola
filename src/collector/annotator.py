@@ -270,7 +270,8 @@ def extract_reasoning_chains(blocks: list[dict]) -> list:
         if not ann:
             continue
 
-        chain_info = normalize_annotation(ann).get("reasoning_chain", {})
+        normalized = normalize_annotation(ann)
+        chain_info = normalized.get("reasoning_chain", {})
         if isinstance(chain_info, dict):
             trigger = (chain_info.get("trigger") or "").strip()
             conclusion = (chain_info.get("conclusion") or "").strip()
@@ -280,7 +281,13 @@ def extract_reasoning_chains(blocks: list[dict]) -> list:
                 dedup_key = trigger[:50]
                 if dedup_key not in seen_triggers:
                     seen_triggers.add(dedup_key)
-                    rc = ReasoningChain(trigger=trigger, conclusion=conclusion)
+                    rc = ReasoningChain(
+                        trigger=trigger,
+                        conclusion=conclusion,
+                        areas=normalized.get("areas", []),
+                        logic_tags=normalized.get("logic_tags", []),
+                        districts=normalized.get("districts", []),
+                    )
                     if key_logic:
                         rc.add_step(key_logic, logic_type="核心推演")
                     chains.append(rc)

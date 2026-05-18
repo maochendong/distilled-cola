@@ -32,10 +32,19 @@ REASONING_TYPES = [
 class ReasoningChain:
     """单条推理链。"""
 
-    def __init__(self, trigger: str, conclusion: str, chain: list[dict] | None = None) -> None:
+    def __init__(
+        self, trigger: str, conclusion: str,
+        chain: list[dict] | None = None,
+        areas: list[str] | None = None,
+        logic_tags: list[str] | None = None,
+        districts: list[str] | None = None,
+    ) -> None:
         self.trigger = trigger
         self.conclusion = conclusion
         self.chain = chain or []
+        self.areas = areas or []
+        self.logic_tags = logic_tags or []
+        self.districts = districts or []
 
     def add_step(self, step: str, logic_type: str = "") -> None:
         self.chain.append({"step": step, "logic_type": logic_type})
@@ -45,6 +54,8 @@ class ReasoningChain:
             "trigger": self.trigger,
             "chain": self.chain,
             "conclusion": self.conclusion,
+            "areas": self.areas,
+            "logic_tags": self.logic_tags,
         }
 
     def to_text(self) -> str:
@@ -84,7 +95,14 @@ class ReasoningIndex:
         json_strs = [json.dumps(c.to_dict(), ensure_ascii=False) for c in chains]
 
         metadatas = [
-            {"trigger": c.trigger[:200], "conclusion": c.conclusion[:200], "chain_json": js}
+            {
+                "trigger": c.trigger[:200],
+                "conclusion": c.conclusion[:200],
+                "chain_json": js,
+                "areas": ",".join(c.areas[:5]) if c.areas else "",
+                "logic_tags": ",".join(c.logic_tags[:5]) if c.logic_tags else "",
+                "districts": ",".join(c.districts[:3]) if c.districts else "",
+            }
             for c, js in zip(chains, json_strs)
         ]
 
@@ -107,12 +125,20 @@ class ReasoningIndex:
             )
             print(f"  🧠 新增 {len(new_ids)} 条推理链 (跳过 {len(texts) - len(new_ids)} 条重复)")
 
-    def search(self, query_embedding: list[float], top_k: int = 3) -> list[dict]:
-        """按语义检索最相关的推理链。"""
+    def search(self, query_embedding: list[float], top_k: int = 3,
+               where_filter: dict | None = None) -> list[dict]:
+        """按语义检索最相关的推理链，支持元数据过滤。
+
+        Args:
+            query_embedding: 查询向量
+            top_k: 返回数量
+            where_filter: ChromaDB where 过滤条件，如 {"areas": {"$contains": "前滩"}}
+        """
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=top_k,
+            n_results=top_k * 3 if where_filter else top_k,  # 有过滤就扩召回
             include=["documents", "metadatas", "distances"],
+            where=where_filter,
         )
 
         hits = []
@@ -130,9 +156,15 @@ class ReasoningIndex:
                     "trigger": results["metadatas"][0][i].get("trigger", ""),
                     "conclusion": results["metadatas"][0][i].get("conclusion", ""),
                     "chain_data": chain_data,
+                    "areas": results["metadatas"][0][i].get("areas", ""),
+                    "logic_tags": results["metadatas"][0][i].get("logic_tags", ""),
                     "score": 1.0 - results["distances"][0][i],
                 })
-        return hits
+        return hits[:top_k]
+
+    def update_metadata(self, id_: str, metadata: dict) -> None:
+        """更新单条推理链的元数据。"""
+        self.collection.update(ids=[id_], metadatas=[metadata])
 
     def stats(self) -> dict:
         count = self.collection.count()

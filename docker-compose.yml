@@ -3,8 +3,8 @@ services:
     build: .
     container_name: distilled-cola-app
     restart: unless-stopped
-    expose:
-      - "8501"
+    ports:
+      - "8501:8501"
     env_file:
       - .env
     volumes:

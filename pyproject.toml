@@ -53,6 +53,7 @@ serve = [
     "rank-bm25>=0.2.0",
     "streamlit>=1.28.0",
     "jieba>=0.42.0",
+    "sentence-transformers>=2.2.0",
 ]
 transcribe = [
     "openai-whisper>=20231117",

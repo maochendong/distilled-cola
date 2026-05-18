@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,18 @@ class Reranker:
         if self._model is not None:
             return True
 
+        # 确保从可访问的 HuggingFace 源下载
+        os.environ.setdefault("HF_ENDPOINT", "https://huggingface.co")
+
+        # 快速检查模型文件是否已缓存。未缓存时不阻塞下载，直接跳过精排。
+        if not self._model_cached():
+            logger.info("精排模型未缓存 (%s)，跳过精排。需要时运行: python -c "
+                        "\"from huggingface_hub import snapshot_download; "
+                        "snapshot_download('%s')\"", self.model_name, self.model_name)
+            self._model = None
+            self._backend = None
+            return False
+
         # 1) FlagReranker (BGE v2 m3 官方接口)
         try:
             from FlagEmbedding import FlagReranker  # type: ignore[import-untyped]
@@ -98,4 +111,24 @@ class Reranker:
 
         self._model = None
         self._backend = None
+        return False
+
+    @staticmethod
+    def _model_cached(model_name: str = "BAAI/bge-reranker-v2-m3") -> bool:
+        """检查模型文件是否已在 HF 缓存中（只看 safetensors/bin 权重文件）。"""
+        import os
+        from pathlib import Path
+        cache_dir = Path(os.path.expanduser(
+            os.environ.get("HF_HOME", "~/.cache/huggingface/hub")
+        ))
+        model_dir = cache_dir / f"models--{model_name.replace('/', '--')}"
+        if not model_dir.exists():
+            return False
+        # 检查是否有权重文件（safetensors 或 bin）
+        for f in model_dir.rglob("model.safetensors"):
+            if f.stat().st_size > 1_000_000:  # >1MB
+                return True
+        for f in model_dir.rglob("*.bin"):
+            if f.stat().st_size > 1_000_000:
+                return True
         return False

@@ -20,35 +20,40 @@ st.set_page_config(
 st.title("🏠 蒸馏小可乐")
 st.markdown("**上海房产分析专家** — 基于博主知识蒸馏的四步推演系统")
 
-# 示例问题
+# 真实感较高的示例问题
 example_questions = [
-    "800万预算，前滩vs大宁怎么选？",
-    "现在是上海买房的好时机吗？",
-    "云锦东方真的值得摇吗？",
-    "上海认房不认贷后，置换链条怎么走？",
-    "徐汇和浦东的学区房，哪个更抗跌？",
+    "总价600万，杨浦vs普陀vs闵行，哪里的老公房更保值？",
+    "浦东唐镇和金桥，自住+保值，哪里更值得上车？",
+    "外环外放开限购后，青浦新城和嘉定新城怎么选？",
+    "2000万预算，黄浦老西门vs徐汇滨江，哪个长期潜力更大？",
+    "大虹桥辐射区中，华漕vs徐泾vs江桥，自住改善选哪里？",
 ]
 
-col1, col2 = st.columns([3, 1])
+col1, col2, col3 = st.columns([3, 1, 1])
 with col1:
-    query = st.text_input("💬 输入你的上海房产问题", placeholder="如：800万预算前滩vs大宁怎么选？")
+    query = st.text_input(
+        "💬 输入你的上海房产问题",
+        placeholder="如：800万预算前滩vs大宁怎么选？",
+    )
 with col2:
     top_k = st.number_input("检索数量", min_value=1, max_value=10, value=5)
+with col3:
+    submitted = st.button("🔍 分析", type="primary", use_container_width=True)
 
 st.markdown("**试试这些问题：**")
 cols = st.columns(2)
 for i, q in enumerate(example_questions):
-    cols[i % 2].button(q, key=f"example_{i}", on_click=lambda q=q: st.session_state.update({"query": q}))
+    if cols[i % 2].button(q, key=f"example_{i}", use_container_width=True):
+        submitted = True
+        query = q
 
-# 自动填充示例
-if "query" in st.session_state:
-    query = st.session_state.query
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def ask_question(q: str, k: int) -> dict:
     return get_pipeline().ask(q.strip(), top_k=k)
 
-if query:
+
+if submitted and query:
     with st.spinner("🔍 正在检索博主知识库并生成四步分析..."):
         result = ask_question(query.strip(), top_k)
 
@@ -67,7 +72,7 @@ if query:
                 st.markdown(f"- **{s.get('source', '未知')}** (相关度: {s.get('score', 0):.2f})")
                 st.markdown(f"  > {s.get('snippet', '')}")
 
-else:
+elif "answer" not in st.session_state:
     st.info("👆 输入你的上海房产相关问题，获取基于博主知识框架的四步分析")
 
 st.markdown("---")

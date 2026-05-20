@@ -9,6 +9,7 @@ services:
       - .env
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
+      - HF_HUB_OFFLINE=1
     volumes:
       - ./data/embeddings:/app/data/embeddings
       - hf_cache:/root/.cache/huggingface

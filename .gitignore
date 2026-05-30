@@ -16,9 +16,11 @@ env/
 data/raw/*
 data/processed/*
 data/embeddings/*
+data/ocr_results/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/embeddings/.gitkeep
+!data/ocr_results/.gitkeep
 
 # Downloaded resources
 /Video/

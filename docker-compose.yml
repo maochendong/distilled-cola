@@ -1,3 +1,6 @@
+volumes:
+  distilled-cola-embeddings:
+
 services:
   app:
     build: .
@@ -6,7 +9,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data/embeddings:/app/data/embeddings
+      - distilled-cola-embeddings:/app/data/embeddings
       - ./.env:/app/.env:ro
     environment:
       - PYTHONUNBUFFERED=1

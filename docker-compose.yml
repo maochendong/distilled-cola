@@ -1,5 +1,7 @@
 volumes:
   distilled-cola-embeddings:
+  distilled-cola-hf-cache:
+  distilled-cola-packages:
 
 services:
   app:
@@ -10,6 +12,9 @@ services:
       - "8080:8080"
     volumes:
       - distilled-cola-embeddings:/app/data/embeddings
+      - distilled-cola-hf-cache:/root/.cache/huggingface
+      - distilled-cola-packages:/usr/local/lib/python3.11/site-packages
       - ./.env:/app/.env:ro
     environment:
       - PYTHONUNBUFFERED=1
+      - HF_ENDPOINT=https://hf-mirror.com

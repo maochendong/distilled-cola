@@ -114,6 +114,6 @@ class Generator:
             model=self.model,
             messages=messages,
             temperature=0.4,
-            max_tokens=4096,
+            max_tokens=8192,
         )
         return resp.choices[0].message.content or ""

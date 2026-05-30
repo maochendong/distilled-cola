@@ -115,7 +115,11 @@ class Reranker:
 
     @staticmethod
     def _model_cached(model_name: str = "BAAI/bge-reranker-v2-m3") -> bool:
-        """检查模型文件是否已在 HF 缓存中（只看 safetensors/bin 权重文件）。"""
+        """检查模型文件是否已在 HF 缓存中。
+
+        先看 safetensors/bin 权重文件，再看 blobs 目录中是否有大文件。
+        BGE Reranker v2-m3 使用 PyTorch 格式，权重存储在 blobs 中。
+        """
         import os
         from pathlib import Path
         cache_dir = Path(os.path.expanduser(
@@ -124,11 +128,15 @@ class Reranker:
         model_dir = cache_dir / f"models--{model_name.replace('/', '--')}"
         if not model_dir.exists():
             return False
-        # 检查是否有权重文件（safetensors 或 bin）
-        for f in model_dir.rglob("model.safetensors"):
-            if f.stat().st_size > 1_000_000:  # >1MB
-                return True
-        for f in model_dir.rglob("*.bin"):
-            if f.stat().st_size > 1_000_000:
+        # 检查是否有 safetensors 或 bin 权重文件
+        for pattern in ("model.safetensors", "*.bin"):
+            for f in model_dir.rglob(pattern):
+                if f.stat().st_size > 1_000_000:
+                    return True
+        # 检查 blobs 目录中是否有大文件（PyTorch 格式缓存）
+        blobs_dir = model_dir / "blobs"
+        if blobs_dir.exists():
+            total = sum(f.stat().st_size for f in blobs_dir.iterdir() if f.is_file())
+            if total > 50_000_000:  # >50MB
                 return True
         return False

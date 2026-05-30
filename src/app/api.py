@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.rag.pipeline import RAGPipeline
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(
     title="蒸馏小可乐 API",
     description="上海房产分析专家 — 基于博主知识蒸馏的四步分析系统",
     version="0.1.0",
 )
+
+# 挂载静态目录，提供 logo 等静态资源
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 pipe = RAGPipeline()
 
@@ -27,6 +36,16 @@ class AskResponse(BaseModel):
     sources: list[dict]
     confidence: float
     reasoning_chains_used: int
+    web_search_used: bool = False
+
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    """Web UI 首页。"""
+    html_path = STATIC_DIR / "index.html"
+    if html_path.exists():
+        return html_path.read_text(encoding="utf-8")
+    return "<h1>蒸馏小可乐</h1><p>页面构建中...</p>"
 
 
 @app.get("/health")

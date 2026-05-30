@@ -16,6 +16,7 @@ class Config:
     # ── API Keys ──
     deepseek_api_key: str = field(default_factory=lambda: os.getenv("DEEPSEEK_API_KEY", ""))
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    anysearch_api_key: str = field(default_factory=lambda: os.getenv("ANYSEARCH_API_KEY", ""))
 
     # ── DeepSeek ──
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")

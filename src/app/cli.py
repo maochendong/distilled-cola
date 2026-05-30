@@ -28,7 +28,7 @@ def ask(
 ) -> None:
     """向蒸馏后的上海房产专家提问。"""
     pipe = RAGPipeline()
-    with console.status("🔍 正在检索博主知识库并生成四步分析..."):
+    with console.status("🔍 正在检索博主知识库 + 实时行情并生成四步分析..."):
         result = pipe.ask(query, top_k=top_k)
 
     console.print()
@@ -41,6 +41,8 @@ def ask(
 
     if result.get("reasoning_chains_used", 0) > 0:
         console.print(f"🧠 引用了 {result['reasoning_chains_used']} 条推理链")
+    if result.get("web_search_used", False):
+        console.print("🌐 参考了实时网络搜索数据")
 
     if result["sources"]:
         table = Table(title="📚 参考来源", show_header=True)

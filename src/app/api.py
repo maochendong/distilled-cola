@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from loguru import logger
 from pydantic import BaseModel
 
 from src.rag.pipeline import RAGPipeline
@@ -58,7 +60,22 @@ def ask(req: AskRequest) -> dict:
     """向蒸馏后的上海房产专家提问。返回四步结构分析。"""
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
-    return pipe.ask(req.query, top_k=req.top_k)
+    t0 = time.time()
+    result = pipe.ask(req.query, top_k=req.top_k)
+    elapsed = time.time() - t0
+    logger.info(
+        "📝 ask | query={} | confidence={:.2f} | chains={} | web={} | "
+        "sources={} | answer_len={} |耗时={:.1f}s".format(
+            req.query[:50],
+            result.get("confidence", 0),
+            result.get("reasoning_chains_used", 0),
+            result.get("web_search_used", False),
+            len(result.get("sources", [])),
+            len(result.get("answer", "")),
+            elapsed,
+        )
+    )
+    return result
 
 
 @app.get("/stats")

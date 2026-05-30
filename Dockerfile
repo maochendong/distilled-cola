@@ -2,46 +2,35 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# ============================================================
-# Deps layer (rebuilds only when pyproject.toml changes)
-# ============================================================
-COPY pyproject.toml ./
+# Install system dependencies for chromadb
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
-# Minimal package so pip install -e . can resolve
-RUN mkdir -p src/app src/collector src/rag src/knowledge_base && \
-    touch src/__init__.py src/app/__init__.py src/collector/__init__.py \
-          src/rag/__init__.py src/knowledge_base/__init__.py
+# Install Python dependencies
+COPY pyproject.toml .
+RUN pip install --no-cache-dir "setuptools>=68.0" && \
+    pip install --no-cache-dir \
+        openai>=1.0.0 \
+        chromadb>=0.5.0 \
+        fastapi>=0.109.0 \
+        uvicorn[standard]>=0.27.0 \
+        pydantic>=2.0.0 \
+        python-dotenv>=1.0.0 \
+        rich>=13.0.0 \
+        tiktoken>=0.6.0 \
+        numpy>=1.24.0 \
+        rank-bm25>=0.2.0 \
+        jieba>=0.42.0 \
+        requests>=2.28.0
 
-# --mount=type=cache persists pip's download cache across rebuilds
-# (BuildKit cache mount, NOT included in final image)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=300 -i https://pypi.tuna.tsinghua.edu.cn/simple \
-      "sympy>=1.13.3" "networkx>=2.5.1" "jinja2>=3.0" "fsspec>=0.8.5" \
-      "mpmath>=1.1.0,<1.4" "MarkupSafe>=2.0" "typing-extensions>=4.10.0"
+# Copy application code
+COPY src/ src/
+COPY .env .env
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=300 --no-deps torch \
-      --index-url https://download.pytorch.org/whl/cpu
+# Create data directories for volume mounts
+RUN mkdir -p data/embeddings
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=300 -i https://pypi.tuna.tsinghua.edu.cn/simple pillow
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=300 --no-deps torchvision \
-      --index-url https://download.pytorch.org/whl/cpu
+EXPOSE 8080
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=300 -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[serve]"
-
-# ============================================================
-# Source layer (rebuilds when src/ or data/ changes, but pip
-# layers above are cached, so rebuilds are fast)
-# ============================================================
-COPY src/ ./src/
-COPY data/ ./data/
-
-EXPOSE 8501
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501')" || exit 1
-
-CMD ["streamlit", "run", "src/app/ui.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--browser.gatherUsageStats=false"]
+CMD ["uvicorn", "src.app.api:app", "--host", "0.0.0.0", "--port", "8080"]

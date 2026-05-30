@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from loguru import logger
 from pydantic import BaseModel
 
 from src.rag.pipeline import RAGPipeline
@@ -63,17 +63,18 @@ def ask(req: AskRequest) -> dict:
     t0 = time.time()
     result = pipe.ask(req.query, top_k=req.top_k)
     elapsed = time.time() - t0
-    logger.info(
-        "📝 ask | query={} | confidence={:.2f} | chains={} | web={} | "
-        "sources={} | answer_len={} |耗时={:.1f}s".format(
-            req.query[:50],
+    print(
+        "[ask] query={} | confidence={:.2f} | chains={} | web={} | "
+        "sources={} | answer_len={} | 耗时={:.1f}s".format(
+            req.query[:80],
             result.get("confidence", 0),
             result.get("reasoning_chains_used", 0),
             result.get("web_search_used", False),
             len(result.get("sources", [])),
             len(result.get("answer", "")),
             elapsed,
-        )
+        ),
+        flush=True,
     )
     return result
 

@@ -114,6 +114,11 @@ class RAGPipeline:
         k = top_k or config.top_k
         answer_id = self._next_answer_id()
 
+        # 无 conv_id 时自动创建会话，确保多轮对话生效
+        if self.conversation_manager and not conv_id:
+            conv = self.conversation_manager.create()
+            conv_id = conv.id
+
         # 对话上下文 (T-001)
         conversation_context = ""
         if self.conversation_manager and conv_id:
@@ -215,17 +220,23 @@ class RAGPipeline:
             "query": query,
             "answer": answer,
             "sources": sources,
-            "confidence": validation.get("confidence", 0.5),
-            "failed_checks": validation.get("failed_checks", []),
-            "reasoning_chains_used": len(reasoning_chains.split("推理链")) - 1 if reasoning_chains else 0,
+            "confidence": getattr(validation, 'confidence', 0.5),
+            "failed_checks": getattr(validation, 'failed_checks', []),
+            "reasoning_chains_used": len([h for h in hits if "trigger" in h]),
             "web_search_used": bool(web_context),
             "conv_id": conv_id,
         }
 
     def ask_stream(self, query: str, top_k: Optional[int] = None,
-                   conv_id: Optional[str] = None) -> Generator[dict, None, None]:
+                   conv_id: Optional[str] = None,
+                   system_prompt: Optional[str] = None) -> Generator[dict, None, None]:
         """流式问答 (T-002) — SSE 逐 token 输出"""
         k = top_k or config.top_k
+
+        # 无 conv_id 时自动创建会话，确保多轮对话生效
+        if self.conversation_manager and not conv_id:
+            conv = self.conversation_manager.create()
+            conv_id = conv.id
 
         conversation_context = ""
         if self.conversation_manager and conv_id:
@@ -272,6 +283,7 @@ class RAGPipeline:
             for chunk in self.generator.generate_stream(
                 query=query, context=context,
                 reasoning_chains=reasoning_chains,
+                system_prompt=system_prompt,
                 conversation_context=conversation_context,
                 web_context=web_context,
             ):
@@ -288,8 +300,33 @@ class RAGPipeline:
         v = self.validator.validate(query, full)
         confidence = v.confidence if self.validator else 1.0
 
+        # 构建来源列表 (与 ask() 一致)
+        sources = [
+            {
+                "id": h.get("id", ""),
+                "source": (
+                    h["metadata"].get("source", "")
+                    if "metadata" in h and h["metadata"]
+                    else h.get("trigger", "")[:60]
+                ),
+                "score": round(float(h.get("score", 0)), 4),
+                "snippet": h.get("text", "")[:120] + "..." if len(h.get("text", "")) > 120 else h.get("text", ""),
+                "type": "static",
+            }
+            for h in hits
+        ]
+        reasoning_chains_used = len([h for h in hits if "trigger" in h])
+
         if self.conversation_manager and conv_id:
             self.conversation_manager.add_message(conv_id, "user", query)
             self.conversation_manager.add_message(conv_id, "assistant", full)
 
-        yield {"type": "done", "answer_id": self._next_answer_id(), "confidence": confidence, "conv_id": conv_id}
+        yield {
+            "type": "done",
+            "answer_id": self._next_answer_id(),
+            "confidence": confidence,
+            "conv_id": conv_id,
+            "sources": sources,
+            "reasoning_chains_used": reasoning_chains_used,
+            "web_search_used": bool(web_context),
+        }

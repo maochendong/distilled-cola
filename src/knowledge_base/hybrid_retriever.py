@@ -209,11 +209,70 @@ class HybridRetriever:
         candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
         return candidates[:top_k]
 
+    def _structured_search(self, query: str) -> list[dict]:
+        """结构化数据查询（SQLite 楼盘/价格/学区数据）。"""
+        try:
+            from src.data.db import search_district, get_district_stats, find_listings
+        except ImportError:
+            return []
+
+        # 从查询中提取板块名
+        entities = self._extract_query_entities(query)
+        matched_areas = entities.get("areas", [])
+        if not matched_areas:
+            return []
+
+        hits = []
+        for area in matched_areas:
+            # 板块统计
+            stats = get_district_stats(area)
+            if stats and stats.get("avg_unit_price"):
+                hits.append({
+                    "id": f"struct_{area}",
+                    "text": (
+                        f"【{area}板块实时数据】均价 {stats['avg_unit_price']:.0f} 元/㎡, "
+                        f"平均总价 {stats['avg_total_price']:.0f} 万元, "
+                        f"在售 {stats['listing_count']} 套, "
+                        f"户型面积 {stats['avg_size']:.0f} ㎡, "
+                        f"价格区间 {stats['min_price']:.0f}-{stats['max_price']:.0f} 万元"
+                    ),
+                    "metadata": {
+                        "source": f"structured_data/{area}",
+                        "areas": area,
+                        "logic_tags": "行情数据",
+                    },
+                    "score": 0.5 + (stats["listing_count"] or 0) * 0.01,
+                    "type": "structured",
+                })
+
+            # 具体房源
+            listings = find_listings(district_name=area, limit=5)
+            if listings:
+                lines = [f"【{area}板块在售房源】"]
+                for l in listings:
+                    lines.append(
+                        f"- {l['property']} {l['layout']} {l['size_sqm']:.0f}㎡ "
+                        f"{l['total_price']:.0f}万 ({l['unit_price']:.0f}元/㎡)"
+                    )
+                hits.append({
+                    "id": f"listings_{area}",
+                    "text": "\n".join(lines),
+                    "metadata": {
+                        "source": f"structured_data/{area}",
+                        "areas": area,
+                        "logic_tags": "在售房源",
+                    },
+                    "score": 0.4,
+                    "type": "structured",
+                })
+
+        return hits
+
     def retrieve(
         self, query: str, top_k: int | None = None,
         include_reasoning: bool = True,
     ) -> list[dict]:
-        """混合检索：语义 + BM25 + 推理链，RRF 融合。
+        """混合检索：语义 + BM25 + 推理链 + 结构化数据，RRF 融合。
 
         Returns:
             按融合分数降序排列的检索结果
@@ -250,6 +309,11 @@ class HybridRetriever:
             reasoning_hits = self._reasoning_search(query, max(1, k // 2))
             if reasoning_hits:
                 reranked.extend(reasoning_hits)
+
+        # 追加结构化数据（板块价格/房源）
+        structured_hits = self._structured_search(query)
+        if structured_hits:
+            reranked.extend(structured_hits)
 
         return reranked
 

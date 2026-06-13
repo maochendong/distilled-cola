@@ -204,6 +204,65 @@ def streamlit(
 
 
 @app.command()
+def data_import(
+    source: str = typer.Argument(..., help="CSV 文件路径"),
+    sample: bool = typer.Option(False, "--sample", "-s",
+                                help="先生成示例 CSV 再导入"),
+) -> None:
+    """导入链家/贝壳结构化数据到 SQLite。
+
+    支持 CSV 格式：district, property, layout, size_sqm, total_price, unit_price, ...
+    使用 --sample 先生成示例数据。
+    """
+    from src.data.db import init_db
+    from src.data.loaders.lianjia import import_from_csv, create_sample_csv
+
+    if sample:
+        source = create_sample_csv(source)
+        console.print(f"[green]✅ 示例数据已生成: {source}[/green]")
+
+    init_db()
+    with console.status("📥 正在导入数据..."):
+        stats = import_from_csv(source)
+
+    console.print(f"[green]✅ 导入完成！[/green]")
+    console.print(f"   板块: {stats['districts']} | 楼盘: {stats['properties']} | 房源: {stats['listings']}")
+    if stats['errors']:
+        console.print(f"   [yellow]⚠️ {stats['errors']} 行导入失败[/yellow]")
+
+
+@app.command()
+def data_stats() -> None:
+    """查看结构化数据统计。"""
+    from src.data.db import query, init_db
+    init_db()
+
+    districts = query("SELECT COUNT(*) as c FROM districts")[0]["c"]
+    properties = query("SELECT COUNT(*) as c FROM properties")[0]["c"]
+    listings = query("SELECT COUNT(*) as c FROM listings")[0]["c"]
+    transactions = query("SELECT COUNT(*) as c FROM transactions")[0]["c"]
+
+    console.print("[bold]📊 结构化数据统计[/bold]")
+    console.print(f"   板块: {districts}")
+    console.print(f"   楼盘: {properties}")
+    console.print(f"   挂牌: {listings}")
+    console.print(f"   成交: {transactions}")
+
+    if districts > 0:
+        top = query("""
+            SELECT d.name, COUNT(p.id) as props
+            FROM districts d
+            LEFT JOIN properties p ON p.district_id = d.id
+            GROUP BY d.id
+            ORDER BY props DESC
+            LIMIT 10
+        """)
+        console.print("\n[bold]板块楼盘数 Top 10:[/bold]")
+        for r in top:
+            console.print(f"   {r['name']}: {r['props']} 个楼盘")
+
+
+@app.command()
 def serve(
     host: str = "127.0.0.1",
     port: int = 8080,

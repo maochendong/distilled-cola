@@ -2,6 +2,7 @@
 import { ref, nextTick, computed, onMounted } from 'vue'
 import { marked } from 'marked'
 import MortgageCalculator from './components/MortgageCalculator.vue'
+import PriceTrendChart from './components/PriceTrendChart.vue'
 
 marked.setOptions({ breaks: true, gfm: true })
 
@@ -16,7 +17,57 @@ const topK = 5
 const identity = ref('')
 const showIdentity = ref(false)
 const showCalculator = ref(false)
+const showChart = ref(false)
 const answerMode = ref('detailed')
+const suggestions = ref([])
+const showSuggestions = ref(false)
+let suggestTimer = null
+
+function onQueryInput() {
+  clearTimeout(suggestTimer)
+  if (!query.value.trim()) { suggestions.value = []; showSuggestions.value = false; return }
+  suggestTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`${API}/suggest?q=${encodeURIComponent(query.value)}&limit=5`)
+      const data = await r.json()
+      suggestions.value = data.suggestions || []
+      showSuggestions.value = suggestions.value.length > 0
+    } catch (e) { suggestions.value = []; showSuggestions.value = false }
+  }, 300)
+}
+
+function pickSuggestion(s) {
+  query.value = s.text
+  showSuggestions.value = false
+  ask()
+}
+const profileId = ref(localStorage.getItem('cola_profile_id') || '')
+
+// On mount, if profile exists, load identity
+if (profileId.value) {
+  fetch(`${API}/profile/${profileId.value}`)
+    .then(r => r.json())
+    .then(p => { if (p.identity_type) identity.value = p.identity_type; })
+    .catch(() => {})
+}
+
+function selectIdentity(value, label) {
+  identity.value = value
+  showIdentity.value = false
+  const identityType = identityOptions.find(o => o.value === value)?.key || 'general'
+  fetch(`${API}/profile`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      profile_id: profileId.value || undefined,
+      identity_type: identityType,
+      identity_label: label,
+    }),
+  })
+  .then(r => r.json())
+  .then(p => { profileId.value = p.profile_id; localStorage.setItem('cola_profile_id', p.profile_id); })
+  .catch(() => {})
+}
 
 const modeOptions = [
   { value: 'detailed', label: '📊 详细分析' },
@@ -26,11 +77,11 @@ const modeOptions = [
 ]
 
 const identityOptions = [
-  { value: '', label: '通用模式', desc: '标准分析' },
-  { value: '你是一位首套刚需购房者，重点关注通勤便利、总价门槛、首付月供、增值潜力。', label: '首套刚需', desc: '侧重通勤与上车门槛' },
-  { value: '你是一位独立女性购房者，重点关注安全底线、产权规划、长期流动性。', label: '独立女性', desc: '侧重安全与产权' },
-  { value: '你是一位有家庭的改善型购房者，重点关注学区、空间动线、置换链条、社区儿童友好度。', label: '家庭改善', desc: '侧重学区与置换' },
-  { value: '你是一位养老置业者，重点关注医疗保障、无障碍通道、社区支持系统。', label: '养老置业', desc: '侧重医疗与适老' },
+  { value: '', label: '通用模式', desc: '标准分析', key: 'general' },
+  { value: '你是一位首套刚需购房者，重点关注通勤便利、总价门槛、首付月供、增值潜力。', label: '首套刚需', desc: '侧重通勤与上车门槛', key: 'firsthome' },
+  { value: '你是一位独立女性购房者，重点关注安全底线、产权规划、长期流动性。', label: '独立女性', desc: '侧重安全与产权', key: 'herhome' },
+  { value: '你是一位有家庭的改善型购房者，重点关注学区、空间动线、置换链条、社区儿童友好度。', label: '家庭改善', desc: '侧重学区与置换', key: 'family' },
+  { value: '你是一位养老置业者，重点关注医疗保障、无障碍通道、社区支持系统。', label: '养老置业', desc: '侧重医疗与适老', key: 'golden' },
 ]
 
 function buildQuery(raw) {
@@ -71,6 +122,7 @@ async function ask() {
 
   const params = new URLSearchParams({ query: q, top_k: String(topK), mode: answerMode.value })
   if (convId.value) params.set('conv_id', convId.value)
+  if (profileId.value) params.set('profile_id', profileId.value)
 
   const eventSource = new EventSource(`${API}/ask/stream?${params}`)
 
@@ -141,13 +193,28 @@ function scrollBottom() {
       <h1 class="title">蒸馏小可乐</h1>
       <p class="tagline">助你决策人生最大一笔投资</p>
       <div class="search-box">
-        <input
-          v-model="query"
-          type="text"
-          placeholder="输入你的上海房产问题..."
-          class="search-input"
-          @keyup.enter="ask()"
-        />
+        <div class="autocomplete-wrapper">
+          <input
+            v-model="query"
+            type="text"
+            placeholder="输入你的上海房产问题..."
+            class="search-input"
+            @keyup.enter="ask()"
+            @input="onQueryInput"
+            @blur="setTimeout(() => showSuggestions = false, 200)"
+            @focus="showSuggestions = suggestions.length > 0"
+          />
+          <div v-if="showSuggestions" class="suggest-dropdown">
+            <div
+              v-for="(s, i) in suggestions"
+              :key="i"
+              class="suggest-item"
+              @mousedown.prevent="pickSuggestion(s)"
+            >
+              <span v-html="s.label"></span>
+            </div>
+          </div>
+        </div>
         <button class="search-btn" @click="ask()" :disabled="loading">🔍 分析</button>
       </div>
       <div class="identity-bar-home">
@@ -156,7 +223,7 @@ function scrollBottom() {
           v-for="opt in identityOptions"
           :key="opt.value"
           :class="['identity-chip', { active: identity === opt.value }]"
-          @click="identity = opt.value"
+          @click="selectIdentity(opt.value, opt.label)"
           :title="opt.desc"
         >{{ opt.label }}</button>
       </div>
@@ -187,7 +254,7 @@ function scrollBottom() {
                 v-for="opt in identityOptions"
                 :key="opt.value"
                 :class="['id-option', { active: identity === opt.value }]"
-                @click="identity = opt.value; showIdentity = false"
+                @click="selectIdentity(opt.value, opt.label)"
               >
                 <span class="id-label">{{ opt.label }}</span>
                 <span class="id-desc">{{ opt.desc }}</span>
@@ -195,6 +262,7 @@ function scrollBottom() {
             </div>
           </div>
           <button class="header-btn" @click="showCalculator = true" title="房贷计算器">💰</button>
+          <button class="header-btn" @click="showChart = true" title="价格趋势">📈</button>
           <button class="new-chat-btn" @click="newChat">+ 新对话</button>
         </div>
       </div>
@@ -247,20 +315,36 @@ function scrollBottom() {
       </div>
 
       <div class="chat-input-bar">
-        <input
-          v-model="query"
-          type="text"
-          placeholder="继续提问..."
-          class="chat-input"
-          @keyup.enter="ask()"
-          :disabled="loading"
-        />
+        <div class="autocomplete-wrapper chat-autocomplete">
+          <input
+            v-model="query"
+            type="text"
+            placeholder="继续提问..."
+            class="chat-input"
+            @keyup.enter="ask()"
+            @input="onQueryInput"
+            @blur="setTimeout(() => showSuggestions = false, 200)"
+            @focus="showSuggestions = suggestions.length > 0"
+            :disabled="loading"
+          />
+          <div v-if="showSuggestions" class="suggest-dropdown suggest-up">
+            <div
+              v-for="(s, i) in suggestions"
+              :key="i"
+              class="suggest-item"
+              @mousedown.prevent="pickSuggestion(s)"
+            >
+              <span v-html="s.label"></span>
+            </div>
+          </div>
+        </div>
         <button class="send-btn" @click="ask()" :disabled="loading || !query.trim()">
           {{ loading ? '分析中...' : '发送' }}
         </button>
       </div>
     </div>
     <MortgageCalculator :visible="showCalculator" @close="showCalculator = false" />
+    <PriceTrendChart :visible="showChart" @close="showChart = false" />
   </div>
 </template>
 
@@ -377,6 +461,21 @@ function scrollBottom() {
 .id-option.active { background: var(--primary-light); color: var(--primary); }
 .id-label { font-weight: 500; }
 .id-desc { font-size: 0.75rem; color: var(--text-secondary); }
+
+.autocomplete-wrapper { position: relative; flex: 1; }
+.chat-autocomplete { flex: 1; }
+.suggest-dropdown {
+  position: absolute; top: 100%; left: 0; right: 0; margin-top: 2px;
+  background: white; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 50; overflow: hidden;
+}
+.suggest-up { top: auto; bottom: 100%; margin-bottom: 2px; }
+.suggest-item {
+  padding: 0.6rem 0.9rem; font-size: 0.85rem; cursor: pointer;
+  border-bottom: 1px solid var(--border); transition: background 0.1s;
+}
+.suggest-item:last-child { border-bottom: none; }
+.suggest-item:hover { background: var(--primary-light); }
 
 @media (max-width: 768px) {
   .title { font-size: 1.7rem; }

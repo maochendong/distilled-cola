@@ -111,12 +111,38 @@ CREATE TABLE IF NOT EXISTS property_school (
     PRIMARY KEY (property_id, school_id)
 );
 
+-- 评分
+CREATE TABLE IF NOT EXISTS district_scores (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    district_id         INTEGER NOT NULL REFERENCES districts(id),
+    score_price         REAL    DEFAULT 0,
+    score_school        REAL    DEFAULT 0,
+    score_commute       REAL    DEFAULT 0,
+    score_appreciation  REAL    DEFAULT 0,
+    score_new_supply    REAL    DEFAULT 0,
+    score_total         REAL    DEFAULT 0,
+    updated_at          TEXT    DEFAULT (datetime('now')),
+    UNIQUE(district_id)
+);
+
+-- 用户画像
+CREATE TABLE IF NOT EXISTS user_profiles (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id      TEXT    UNIQUE NOT NULL,
+    identity_type   TEXT    NOT NULL DEFAULT 'general',
+    identity_label  TEXT    DEFAULT '',
+    questionnaire   TEXT    DEFAULT '{}',
+    created_at      TEXT    DEFAULT (datetime('now')),
+    updated_at      TEXT    DEFAULT (datetime('now'))
+);
+
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_listings_property ON listings(property_id);
 CREATE INDEX IF NOT EXISTS idx_listings_price ON listings(total_price);
 CREATE INDEX IF NOT EXISTS idx_transactions_property ON transactions(property_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(trans_date);
 CREATE INDEX IF NOT EXISTS idx_properties_district ON properties(district_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_pid ON user_profiles(profile_id);
 """
 
 

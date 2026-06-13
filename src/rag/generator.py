@@ -1,11 +1,19 @@
 """
 Generator — DeepSeek 答案生成器
 支持流式输出 (T-002) 和对话上下文注入 (T-001)
+v2.0: +多模式回答 (detailed/concise/compare/investment)
 """
 import logging
 from typing import Optional, Generator
 
 logger = logging.getLogger(__name__)
+
+MODE_PROMPTS = {
+    "detailed": "",
+    "concise": "\n请用一段话给出最核心的结论，控制在 200 字以内，只回答最关键的建议，省略分析过程。",
+    "compare": "\n请以对比表格形式输出结果，比较不同选项在价格、学区、通勤、增值、风险五个维度的差异，并给出综合建议。",
+    "investment": "\n请重点关注投资回报率、流动性、增值潜力和风险因素。从纯投资视角给出决策建议，包含短期/中期/长期的变现策略。",
+}
 
 SYSTEM_PROMPT = """你是一位深耕上海房产市场的资深分析师，拥有以下核心能力：
 - 深度理解上海各板块（前滩、大宁、徐汇滨江、北外滩、唐镇等）的价值逻辑
@@ -61,18 +69,27 @@ class Generator:
         self.system_prompt = system_prompt or SYSTEM_PROMPT
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.mode = "detailed"
+
+    def _apply_mode(self, prompt: str, mode: str) -> str:
+        """根据模式追加 prompt 修饰。"""
+        suffix = MODE_PROMPTS.get(mode, "")
+        if suffix:
+            return prompt + suffix
+        return prompt
 
     def generate(self, query: str, context: str = "",
                  reasoning_chains: str = "",
                  system_prompt: Optional[str] = None,
                  conversation_context: str = "",
-                 web_context: str = "") -> str:
+                 web_context: str = "",
+                 mode: str = "detailed") -> str:
         """阻塞式生成"""
         if not context and not reasoning_chains and not web_context:
             return "⚠️ 知识库中暂未找到相关参考信息，请换个角度提问。"
         messages = self._build_messages(
             query, context, reasoning_chains,
-            system_prompt, conversation_context, web_context
+            system_prompt, conversation_context, web_context, mode
         )
         try:
             resp = self.client.chat.completions.create(
@@ -90,14 +107,15 @@ class Generator:
                         reasoning_chains: str = "",
                         system_prompt: Optional[str] = None,
                         conversation_context: str = "",
-                        web_context: str = "") -> Generator[str, None, None]:
+                        web_context: str = "",
+                        mode: str = "detailed") -> Generator[str, None, None]:
         """流式生成 — 逐 token 产出 (T-002)"""
         if not context and not reasoning_chains and not web_context:
             yield "⚠️ 知识库中暂未找到相关参考信息，请换个角度提问。"
             return
         messages = self._build_messages(
             query, context, reasoning_chains,
-            system_prompt, conversation_context, web_context
+            system_prompt, conversation_context, web_context, mode
         )
         try:
             stream = self.client.chat.completions.create(
@@ -119,9 +137,10 @@ class Generator:
                         reasoning_chains: str,
                         system_prompt: Optional[str],
                         conversation_context: str,
-                        web_context: str = "") -> list:
+                        web_context: str = "",
+                        mode: str = "detailed") -> list:
         """组装消息列表"""
-        prompt = system_prompt or self.system_prompt
+        prompt = self._apply_mode(system_prompt or self.system_prompt, mode)
 
         user_parts = [f"## 用户问题\n{query}\n"]
         if conversation_context:

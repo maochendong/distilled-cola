@@ -45,6 +45,9 @@ class RAGPipeline:
         # 多轮对话
         from src.rag.conversation import conversation_manager as cm
         self.conversation_manager = conversation_manager or cm
+        # 语义缓存
+        from src.rag.cache import SemanticCache
+        self.cache = SemanticCache()
         self._answer_counter = 0
 
     def _next_answer_id(self) -> str:
@@ -109,10 +112,17 @@ class RAGPipeline:
     def ask(self, query: str, top_k: Optional[int] = None,
             conv_id: Optional[str] = None,
             system_prompt: Optional[str] = None,
-            response_format: Optional[dict] = None) -> dict:
+            response_format: Optional[dict] = None,
+            mode: str = "detailed") -> dict:
         """完整问答流程：检索 → 实时搜索 → 生成 → 自检。"""
         k = top_k or config.top_k
         answer_id = self._next_answer_id()
+
+        # 语义缓存检查
+        cached = self.cache.get(query)
+        if cached:
+            cached["cached"] = True
+            return cached
 
         # 无 conv_id 时自动创建会话，确保多轮对话生效
         if self.conversation_manager and not conv_id:
@@ -171,6 +181,7 @@ class RAGPipeline:
             system_prompt=system_prompt,
             conversation_context=conversation_context,
             web_context=web_context,
+            mode=mode,
         )
 
         # 来源合并（静态 + 实时）
@@ -203,6 +214,7 @@ class RAGPipeline:
                 system_prompt=system_prompt,
                 conversation_context=conversation_context,
                 web_context=web_context,
+                mode=mode,
             )
             validation = self.validator.validate(query, answer, sources=sources)
 
@@ -215,7 +227,7 @@ class RAGPipeline:
             self.conversation_manager.add_message(conv_id, "user", query)
             self.conversation_manager.add_message(conv_id, "assistant", answer)
 
-        return {
+        result = {
             "answer_id": answer_id,
             "query": query,
             "answer": answer,
@@ -227,11 +239,33 @@ class RAGPipeline:
             "conv_id": conv_id,
         }
 
+        # 写入语义缓存
+        self.cache.set(query, result)
+
+        return result
+
     def ask_stream(self, query: str, top_k: Optional[int] = None,
                    conv_id: Optional[str] = None,
-                   system_prompt: Optional[str] = None) -> Generator[dict, None, None]:
+                   system_prompt: Optional[str] = None,
+                   mode: str = "detailed") -> Generator[dict, None, None]:
         """流式问答 (T-002) — SSE 逐 token 输出"""
         k = top_k or config.top_k
+
+        # 语义缓存检查
+        cached = self.cache.get(query)
+        if cached:
+            yield {"type": "token", "content": cached.get("answer", "")}
+            yield {
+                "type": "done",
+                "answer_id": self._next_answer_id(),
+                "confidence": cached.get("confidence", 1.0),
+                "sources": cached.get("sources", []),
+                "reasoning_chains_used": cached.get("reasoning_chains_used", 0),
+                "web_search_used": cached.get("web_search_used", False),
+                "conv_id": conv_id,
+                "cached": True,
+            }
+            return
 
         # 无 conv_id 时自动创建会话，确保多轮对话生效
         if self.conversation_manager and not conv_id:
@@ -286,6 +320,7 @@ class RAGPipeline:
                 system_prompt=system_prompt,
                 conversation_context=conversation_context,
                 web_context=web_context,
+                mode=mode,
             ):
                 full += chunk
                 yield {"type": "token", "content": chunk}

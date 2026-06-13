@@ -36,6 +36,7 @@ class AskRequest(BaseModel):
     query: str
     top_k: int = 5
     conv_id: Optional[str] = None
+    mode: str = "detailed"
 
 
 class AskResponse(BaseModel):
@@ -67,7 +68,7 @@ def ask(req: AskRequest) -> dict:
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
     t0 = time.time()
-    result = pipe.ask(req.query, top_k=req.top_k, conv_id=req.conv_id)
+    result = pipe.ask(req.query, top_k=req.top_k, conv_id=req.conv_id, mode=req.mode)
     elapsed = time.time() - t0
     print(
         "[ask] query={} | confidence={:.2f} | chains={} | web={} | "
@@ -86,10 +87,10 @@ def ask(req: AskRequest) -> dict:
 
 
 @app.get("/ask/stream")
-def ask_stream(query: str, top_k: int = 5, conv_id: Optional[str] = None):
+def ask_stream(query: str, top_k: int = 5, conv_id: Optional[str] = None, mode: str = "detailed"):
     """流式问答 — SSE (Server-Sent Events)，支持多轮对话"""
     def event_stream():
-        for chunk in pipe.ask_stream(query=query, top_k=top_k, conv_id=conv_id):
+        for chunk in pipe.ask_stream(query=query, top_k=top_k, conv_id=conv_id, mode=mode):
             yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
             if chunk.get("type") == "done":
                 break

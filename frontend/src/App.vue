@@ -1,6 +1,7 @@
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, computed, onMounted } from 'vue'
 import { marked } from 'marked'
+import MortgageCalculator from './components/MortgageCalculator.vue'
 
 marked.setOptions({ breaks: true, gfm: true })
 
@@ -14,6 +15,15 @@ const convId = ref(null)
 const topK = 5
 const identity = ref('')
 const showIdentity = ref(false)
+const showCalculator = ref(false)
+const answerMode = ref('detailed')
+
+const modeOptions = [
+  { value: 'detailed', label: '📊 详细分析' },
+  { value: 'concise', label: '✂️ 一句话' },
+  { value: 'compare', label: '📋 对比表格' },
+  { value: 'investment', label: '💰 投资建议' },
+]
 
 const identityOptions = [
   { value: '', label: '通用模式', desc: '标准分析' },
@@ -59,7 +69,7 @@ async function ask() {
   const msg = ref({ role: 'assistant', content: '', confidence: null, sources: [], reasoning_chains_used: 0, web_search_used: false })
   messages.value.push(msg.value)
 
-  const params = new URLSearchParams({ query: q, top_k: String(topK) })
+  const params = new URLSearchParams({ query: q, top_k: String(topK), mode: answerMode.value })
   if (convId.value) params.set('conv_id', convId.value)
 
   const eventSource = new EventSource(`${API}/ask/stream?${params}`)
@@ -184,8 +194,18 @@ function scrollBottom() {
               </button>
             </div>
           </div>
+          <button class="header-btn" @click="showCalculator = true" title="房贷计算器">💰</button>
           <button class="new-chat-btn" @click="newChat">+ 新对话</button>
         </div>
+      </div>
+
+      <div class="mode-selector">
+        <button
+          v-for="opt in modeOptions"
+          :key="opt.value"
+          :class="['mode-btn', { active: answerMode === opt.value }]"
+          @click="answerMode = opt.value"
+        >{{ opt.label }}</button>
       </div>
 
       <div class="chat-messages">
@@ -240,6 +260,7 @@ function scrollBottom() {
         </button>
       </div>
     </div>
+    <MortgageCalculator :visible="showCalculator" @close="showCalculator = false" />
   </div>
 </template>
 
@@ -271,6 +292,13 @@ function scrollBottom() {
 .chat-title { font-size: 1.05rem; font-weight: 700; }
 .new-chat-btn { padding: 0.35rem 0.85rem; font-size: 0.82rem; background: none; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; color: var(--text-secondary); }
 .new-chat-btn:hover { background: var(--primary-light); color: var(--primary); }
+.header-btn { padding: 0.35rem 0.5rem; font-size: 1rem; background: none; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; line-height: 1; }
+.header-btn:hover { background: var(--primary-light); border-color: var(--primary); }
+
+.mode-selector { display: flex; gap: 0.3rem; margin-bottom: 0.6rem; flex-shrink: 0; flex-wrap: wrap; }
+.mode-btn { padding: 0.3rem 0.6rem; font-size: 0.78rem; border: 1px solid var(--border); border-radius: 8px; background: var(--white); cursor: pointer; color: var(--text-secondary); transition: all 0.15s; }
+.mode-btn:hover { border-color: var(--primary); color: var(--primary); }
+.mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 .chat-messages { flex: 1; overflow-y: auto; padding-bottom: 1rem; }
 .msg { margin-bottom: 1.2rem; }

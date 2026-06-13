@@ -1,35 +1,62 @@
-"""RAG Pipeline — 四步分析流程的端到端问答流水线。
+"""RAG Pipeline — 四步分析流程的端到端问答流水线 (v2.1)
 
 流程：
   1. 识别关键变量（从用户问题提取核心因子）
   2. 调用历史框架（混合检索知识 + 推理链）
   3. 代入当前数据（静态知识 + 实时行情）
   4. 给出个性化建议（生成 + 自检 + 溯源）
+
+v2.1: +多轮对话 +流式输出 +指数退避自检 +非阻塞精排
 """
 
 from __future__ import annotations
 
+import logging
+import time
+from typing import Optional, Generator
+
 from src.config import config
 from src.rag.generator import Generator
-from src.rag.reasoning import ReasoningValidator, format_sources
 from src.rag.retriever import Retriever
 from src.rag.web_search import web_search, format_web_results
+
+logger = logging.getLogger(__name__)
 
 
 class RAGPipeline:
     """端到端的 RAG 问答流水线（上海房产版）。"""
 
-    def __init__(self) -> None:
-        self.retriever = Retriever()
-        self.generator = Generator()
-        self.validator = ReasoningValidator()
+    def __init__(self, retriever=None, generator=None,
+                 validator=None, reranker=None,
+                 conversation_manager=None):
+        self.retriever = retriever or Retriever()
+        self.generator = generator or Generator()
+        # 验证器 — 指数退避 + 可配置阈值
+        from src.rag.validator import ReasoningValidator
+        self.validator = validator or ReasoningValidator(
+            client=self.generator.client,
+            teacher_model=getattr(config, 'teacher_model', 'deepseek-v4-pro'),
+        )
+        # 非阻塞精排
+        from src.rag.reranker import Reranker
+        self.reranker = reranker or Reranker()
+        # 实时搜索
         self._web = web_search()
+        # 多轮对话
+        from src.rag.conversation import conversation_manager as cm
+        self.conversation_manager = conversation_manager or cm
+        self._answer_counter = 0
+
+    def _next_answer_id(self) -> str:
+        self._answer_counter += 1
+        return f"ans-{int(time.time())}-{self._answer_counter}"
+
+    # ── 格式化 ──
 
     def _format_context(self, hits: list[dict]) -> str:
         """从已检索的结果中格式化上下文文本。"""
         parts = []
         for i, h in enumerate(hits, 1):
-            # 知识块和推理链有不同的结构
             if "metadata" in h and h["metadata"]:
                 source = h["metadata"].get("source", h["metadata"].get("title", ""))
                 tags = []
@@ -55,12 +82,10 @@ class RAGPipeline:
             parts.append(f"### 推理链 {i}\n{h['text']}")
         return "\n\n".join(parts) if parts else ""
 
-    def _needs_real_time(self, query: str) -> bool:
-        """判断是否需要查询实时数据。
+    # ── 实时搜索判断 ──
 
-        包含成交量、价格、政策、挂牌等动态指标的查询触发实时搜索。
-        同时覆盖常见的房产问题模式（值得买、对比、分析等）。
-        """
+    def _needs_real_time(self, query: str) -> bool:
+        """判断是否需要查询实时数据。"""
         keywords = [
             "成交量", "成交价", "挂牌", "均价", "走势", "行情",
             "最新", "2025", "2026", "2027",
@@ -73,28 +98,38 @@ class RAGPipeline:
         ]
         return any(kw in query for kw in keywords)
 
-    def ask(self, query: str, top_k: int | None = None) -> dict:
-        """完整问答流程：检索 → 实时搜索 → 生成 → 自检。
+    def _inject_search_warning(self, hits: list) -> str:
+        if not hits:
+            return ("\n\n> ⚠️ **检索提示**：未在知识库中找到直接相关的信息。"
+                    "以下回答基于模型自身知识，可能不够准确，请谨慎参考。\n")
+        return ""
 
-        Args:
-            query: 用户问题（如「800万预算前滩vs大宁怎么选？」）
-            top_k: 检索的知识块数量
+    # ── 核心方法 ──
 
-        Returns:
-            {
-                "query": 原始问题,
-                "answer": 四步结构分析,
-                "sources": 参考来源列表,
-                "confidence": 置信度评分,
-                "reasoning_chains_used": 使用的推理链数,
-                "web_search_used": 是否使用了实时搜索,
-            }
-        """
+    def ask(self, query: str, top_k: Optional[int] = None,
+            conv_id: Optional[str] = None,
+            system_prompt: Optional[str] = None,
+            response_format: Optional[dict] = None) -> dict:
+        """完整问答流程：检索 → 实时搜索 → 生成 → 自检。"""
         k = top_k or config.top_k
+        answer_id = self._next_answer_id()
+
+        # 对话上下文 (T-001)
+        conversation_context = ""
+        if self.conversation_manager and conv_id:
+            conversation_context = self.conversation_manager.get_context(conv_id)
 
         # 静态 RAG 检索（博主知识 + 推理链）
         self.retriever.ensure_bm25_index()
         hits = self.retriever.retrieve(query, top_k=k)
+
+        # 精排 (T-006)
+        if self.reranker and hits:
+            try:
+                hits = self.reranker.rerank(query, hits, top_k=k)
+            except Exception as e:
+                logger.warning("精排失败: %s", e)
+
         context = self._format_context(hits)
         reasoning_chains = self._get_reasoning_chains(hits)
 
@@ -103,33 +138,33 @@ class RAGPipeline:
         web_sources: list[dict] = []
         if self._needs_real_time(query) and self._web.available:
             try:
-                # 强制限定上海 + 房产领域，避免结果漂移到其他城市
                 sh_query = query if "上海" in query else f"上海 {query}"
-                web_results = self._web.search(
+                results = self._web.search(
                     sh_query, max_results=5,
-                    domain="home", zone="cn",
-                    freshness="year",
+                    domain="home", zone="cn", freshness="year",
                 )
-                # 如果领域搜索无结果，降级为通用搜索
-                if not web_results:
-                    web_results = self._web.search(
+                # 领域搜索无结果时降级为通用搜索
+                if not results:
+                    results = self._web.search(
                         sh_query, max_results=5,
                         zone="cn", freshness="month",
                     )
-                if web_results:
-                    web_context = format_web_results(web_results)
+                if results:
+                    web_context = format_web_results(results)
                     web_sources = [
                         {"source": r.url, "title": r.title, "snippet": r.snippet[:120]}
-                        for r in web_results
+                        for r in results
                     ]
             except Exception:
-                pass  # 网络搜索失败不影响主流程
+                pass
 
         # 生成
         answer = self.generator.generate(
             query,
             context=context,
             reasoning_chains=reasoning_chains,
+            system_prompt=system_prompt,
+            conversation_context=conversation_context,
             web_context=web_context,
         )
 
@@ -154,21 +189,107 @@ class RAGPipeline:
 
         validation = self.validator.validate(query, answer, sources=sources)
 
-        # 如果质量不达标且存在推理链，重试一次
+        # 自检未通过则重试一次 (T-004)
         if self.validator.needs_refinement(validation) and reasoning_chains:
             answer = self.generator.generate(
                 query,
                 context=context,
                 reasoning_chains=reasoning_chains,
+                system_prompt=system_prompt,
+                conversation_context=conversation_context,
                 web_context=web_context,
             )
             validation = self.validator.validate(query, answer, sources=sources)
 
+        search_warning = self._inject_search_warning(hits)
+        if search_warning:
+            answer += search_warning
+
+        # 保存对话 (T-001)
+        if self.conversation_manager and conv_id:
+            self.conversation_manager.add_message(conv_id, "user", query)
+            self.conversation_manager.add_message(conv_id, "assistant", answer)
+
         return {
+            "answer_id": answer_id,
             "query": query,
             "answer": answer,
             "sources": sources,
             "confidence": validation.get("confidence", 0.5),
+            "failed_checks": validation.get("failed_checks", []),
             "reasoning_chains_used": len(reasoning_chains.split("推理链")) - 1 if reasoning_chains else 0,
             "web_search_used": bool(web_context),
+            "conv_id": conv_id,
         }
+
+    def ask_stream(self, query: str, top_k: Optional[int] = None,
+                   conv_id: Optional[str] = None) -> Generator[dict, None, None]:
+        """流式问答 (T-002) — SSE 逐 token 输出"""
+        k = top_k or config.top_k
+
+        conversation_context = ""
+        if self.conversation_manager and conv_id:
+            conversation_context = self.conversation_manager.get_context(conv_id)
+
+        # 检索
+        self.retriever.ensure_bm25_index()
+        hits = self.retriever.retrieve(query, top_k=k)
+
+        # 精排
+        if self.reranker and hits:
+            try:
+                hits = self.reranker.rerank(query, hits, top_k=k)
+            except Exception as e:
+                logger.warning("精排失败: %s", e)
+
+        context = self._format_context(hits)
+        reasoning_chains = self._get_reasoning_chains(hits)
+
+        # 实时搜索
+        web_context = ""
+        if self._needs_real_time(query) and self._web.available:
+            try:
+                sh_query = query if "上海" in query else f"上海 {query}"
+                results = self._web.search(
+                    sh_query, max_results=5,
+                    domain="home", zone="cn", freshness="year",
+                )
+                if not results:
+                    results = self._web.search(
+                        sh_query, max_results=5,
+                        zone="cn", freshness="month",
+                    )
+                if results:
+                    web_context = format_web_results(results)
+            except Exception:
+                pass
+
+        search_warning = self._inject_search_warning(hits)
+
+        # 流式生成
+        full = ""
+        try:
+            for chunk in self.generator.generate_stream(
+                query=query, context=context,
+                reasoning_chains=reasoning_chains,
+                conversation_context=conversation_context,
+                web_context=web_context,
+            ):
+                full += chunk
+                yield {"type": "token", "content": chunk}
+        except Exception as e:
+            logger.error("流式生成失败: %s", e)
+            yield {"type": "error", "content": f"⚠️ 生成错误: {e}"}
+
+        if search_warning:
+            yield {"type": "warning", "content": search_warning}
+
+        # 验证
+        v = self.validator.validate(query, full)
+        confidence = v.confidence if self.validator else 1.0
+
+        if self.conversation_manager and conv_id:
+            self.conversation_manager.add_message(conv_id, "user", query)
+            self.conversation_manager.add_message(conv_id, "assistant", full)
+
+        yield {"type": "done", "answer_id": self._next_answer_id(), "confidence": confidence, "conv_id": conv_id}

@@ -6,8 +6,11 @@ import sys
 import time
 from pathlib import Path
 
+import json
+import asyncio
+
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -77,6 +80,17 @@ def ask(req: AskRequest) -> dict:
         flush=True,
     )
     return result
+
+
+@app.get("/ask/stream")
+async def ask_stream(query: str, top_k: int = 5):
+    """流式问答 — SSE (Server-Sent Events)"""
+    async def event_stream():
+        for chunk in pipe.ask_stream(query=query, top_k=top_k):
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            if chunk.get("type") == "done":
+                break
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/stats")

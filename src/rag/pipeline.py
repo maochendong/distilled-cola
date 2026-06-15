@@ -19,6 +19,7 @@ from src.config import config
 from src.rag.generator import Generator
 from src.rag.retriever import Retriever
 from src.rag.web_search import web_search, format_web_results
+from src.rag.profile_router import ProfileRouter
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,8 @@ class RAGPipeline:
             conv_id: Optional[str] = None,
             system_prompt: Optional[str] = None,
             response_format: Optional[dict] = None,
-            mode: str = "detailed") -> dict:
+            mode: str = "detailed",
+            profile_id: Optional[str] = None) -> dict:
         """完整问答流程：检索 → 实时搜索 → 生成 → 自检。"""
         k = top_k or config.top_k
         answer_id = self._next_answer_id()
@@ -123,6 +125,10 @@ class RAGPipeline:
         if cached:
             cached["cached"] = True
             return cached
+
+        # 用户画像路由 (T-015)
+        if profile_id:
+            query = ProfileRouter.route_query(query, profile_id)
 
         # 无 conv_id 时自动创建会话，确保多轮对话生效
         if self.conversation_manager and not conv_id:
@@ -247,9 +253,14 @@ class RAGPipeline:
     def ask_stream(self, query: str, top_k: Optional[int] = None,
                    conv_id: Optional[str] = None,
                    system_prompt: Optional[str] = None,
-                   mode: str = "detailed") -> Generator[dict, None, None]:
+                   mode: str = "detailed",
+                   profile_id: Optional[str] = None) -> Generator[dict, None, None]:
         """流式问答 (T-002) — SSE 逐 token 输出"""
         k = top_k or config.top_k
+
+        # 用户画像路由 (T-015)
+        if profile_id:
+            query = ProfileRouter.route_query(query, profile_id)
 
         # 语义缓存检查
         cached = self.cache.get(query)

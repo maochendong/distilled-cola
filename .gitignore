@@ -53,3 +53,12 @@ data/metadata/
 
 # Claude worktree submodules
 .claude/worktrees/
+
+# Claude local settings
+.claude/settings.json
+
+# MiMoCode memory/planning
+.mimocode/
+
+# User feedback data
+data/feedback.jsonl

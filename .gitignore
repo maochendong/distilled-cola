@@ -47,3 +47,9 @@ logs/
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+
+# Auto-generated metadata (SQLite)
+data/metadata/
+
+# Claude worktree submodules
+.claude/worktrees/

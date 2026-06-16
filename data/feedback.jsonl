@@ -1,0 +1,3 @@
+{"id": "9f0f6575-568", "answer_id": "test-1", "rating": "up", "correction": "", "query": "test", "metadata": {}, "timestamp": "2026-06-11T19:39:25.658642"}
+{"id": "c214cf56-5dd", "answer_id": "test-1", "rating": "up", "correction": "", "query": "", "metadata": {}, "timestamp": "2026-06-13T19:22:00.316073"}
+{"id": "da5ce722-d5f", "answer_id": "test-2", "rating": "down", "correction": "数据不准确", "query": "", "metadata": {}, "timestamp": "2026-06-13T19:23:36.286245"}
